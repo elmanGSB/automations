@@ -22,9 +22,9 @@ async def test_notify_sends_telegram_message():
     assert mock_instance.post.called
     call_kwargs = mock_instance.post.call_args.kwargs
     payload = call_kwargs["json"]
-    assert "conference-panel" in payload["text"]
+    assert "conference\\-panel" in payload["text"]
     assert "TechCrunch Panel 2026" in payload["text"]
-    assert payload["parse_mode"] == "Markdown"
+    assert payload["parse_mode"] == "MarkdownV2"
 
 async def test_notify_uses_correct_bot_token():
     """Verify the Telegram API URL uses the configured bot token."""
@@ -68,4 +68,28 @@ async def test_notify_includes_notebook_id():
         )
 
     payload = mock_instance.post.call_args.kwargs["json"]
-    assert "nb-class-001" in payload["text"]
+    assert "nb\\-class\\-001" in payload["text"]
+
+async def test_notify_escapes_special_characters():
+    """Meeting titles with Telegram special chars should not break the message."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_instance = AsyncMock()
+        MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+        MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_instance.post = AsyncMock(return_value=mock_response)
+
+        await notify_new_category(
+            category="customer-discovery",
+            meeting_title="[Q1] AT&T call *important* follow_up",
+            meeting_id="meet-special-123",
+            notebook_id="nb-001",
+        )
+
+    payload = mock_instance.post.call_args.kwargs["json"]
+    assert payload["parse_mode"] == "MarkdownV2"
+    # Special chars should be escaped, not raw
+    assert "[Q1]" not in payload["text"]  # brackets must be escaped
+    assert "\\[Q1\\]" in payload["text"]
