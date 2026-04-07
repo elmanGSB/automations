@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 from typing import Optional
 from config import STATE_FILE as _DEFAULT_STATE_FILE
 
@@ -20,9 +21,20 @@ def _load() -> dict:
 
 
 def _save(data: dict) -> None:
-    path = sys.modules[__name__].STATE_FILE
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+    import tempfile
+    state_file = sys.modules[__name__].STATE_FILE
+    dir_name = os.path.dirname(state_file) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, state_file)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def get_notebook_id(category: str) -> Optional[str]:
