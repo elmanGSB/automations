@@ -3,6 +3,26 @@ import tempfile
 from fireflies import Transcript, Sentence
 from pdf_generator import generate_transcript_pdf
 
+def test_generate_pdf_handles_special_characters():
+    """Transcripts with & < > in text should not crash reportlab."""
+    transcript = Transcript(
+        id="special01",
+        title="Call with AT&T about Revenue > Goals",
+        date="2026-04-07",
+        duration=900,
+        participants=["ceo@att.com"],
+        sentences=[
+            Sentence(index=0, speaker_name="CEO", text="Our revenue > $1M & growing.", start_time=0.0, end_time=5.0),
+        ],
+        summary_overview="AT&T CEO discussed revenue < projections.",
+        summary_action_items=["Send deck to AT&T"],
+        summary_keywords=[],
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = generate_transcript_pdf(transcript, tmpdir)
+        assert os.path.exists(path)
+        assert os.path.getsize(path) > 500
+
 def make_transcript() -> Transcript:
     return Transcript(
         id="abc123",

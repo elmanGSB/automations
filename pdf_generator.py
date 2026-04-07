@@ -1,3 +1,4 @@
+import html
 import os
 import re
 from reportlab.lib.pagesizes import A4
@@ -6,6 +7,11 @@ from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
 from reportlab.lib import colors
 from fireflies import Transcript
+
+
+def _esc(text: str) -> str:
+    """Escape HTML special characters for reportlab Paragraph."""
+    return html.escape(text or "")
 
 
 def _safe_filename(title: str) -> str:
@@ -46,28 +52,28 @@ def generate_transcript_pdf(transcript: Transcript, output_dir: str) -> str:
     duration_min = transcript.duration // 60 if transcript.duration else 0
 
     story = [
-        Paragraph(transcript.title or "Untitled Meeting", title_style),
-        Paragraph(f"Date: {date_str} &nbsp;&nbsp; Duration: {duration_min} min", meta_style),
+        Paragraph(_esc(transcript.title or "Untitled Meeting"), title_style),
+        Paragraph(f"Date: {_esc(date_str)} &nbsp;&nbsp; Duration: {_esc(str(duration_min))} min", meta_style),
         Spacer(1, 0.4 * cm),
         HRFlowable(width="100%", thickness=1, color=colors.lightgrey),
         Spacer(1, 0.4 * cm),
     ]
 
     if transcript.participants:
-        story.append(Paragraph(f"Participants: {', '.join(transcript.participants)}", meta_style))
+        story.append(Paragraph(f"Participants: {_esc(', '.join(transcript.participants))}", meta_style))
         story.append(Spacer(1, 0.3 * cm))
 
     if transcript.summary_overview:
         story += [
             Paragraph("Summary", section_style),
-            Paragraph(transcript.summary_overview, text_style),
+            Paragraph(_esc(transcript.summary_overview), text_style),
             Spacer(1, 0.3 * cm),
         ]
 
     if transcript.summary_action_items:
         story.append(Paragraph("Action Items", section_style))
         for item in transcript.summary_action_items:
-            story.append(Paragraph(f"• {item}", bullet_style))
+            story.append(Paragraph(f"• {_esc(item)}", bullet_style))
         story.append(Spacer(1, 0.3 * cm))
 
     story += [
@@ -81,8 +87,8 @@ def generate_transcript_pdf(transcript: Transcript, output_dir: str) -> str:
         for sentence in transcript.sentences:
             if sentence.speaker_name != current_speaker:
                 current_speaker = sentence.speaker_name
-                story.append(Paragraph(current_speaker, speaker_style))
-            story.append(Paragraph(sentence.text, text_style))
+                story.append(Paragraph(_esc(current_speaker), speaker_style))
+            story.append(Paragraph(_esc(sentence.text), text_style))
     else:
         story.append(Paragraph("(No transcript available)", meta_style))
 
