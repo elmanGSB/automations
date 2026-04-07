@@ -24,9 +24,13 @@ If none of the known categories fit, invent a short descriptive slug (e.g. "conf
 
 
 def _extract_json(text: str) -> dict:
-    """Extract JSON from text, handling markdown code blocks."""
-    # Strip markdown code fences if present
-    text = re.sub(r"```(?:json)?\n?", "", text).strip()
+    """Extract JSON from LLM response, handling markdown code blocks and trailing commentary."""
+    # Try to extract content between code fences first
+    match = re.search(r"```(?:json)?\n?(.*?)\n?```", text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    else:
+        text = text.strip()
     return json.loads(text)
 
 
@@ -67,7 +71,10 @@ async def classify_meeting(
     )
 
     raw = response.choices[0].message.content.strip()
-    data = _extract_json(raw)
+    try:
+        data = _extract_json(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise ValueError(f"Failed to parse classifier response: {e!r}\nRaw response: {raw!r}") from e
 
     return ClassificationResult(
         category=data["category"],

@@ -68,3 +68,24 @@ async def test_classify_handles_malformed_json():
         )
 
     assert result.category == "advisors"
+
+
+async def test_classify_handles_json_with_trailing_text():
+    """LLM sometimes adds commentary after the closing code fence."""
+    mock_completion = MagicMock()
+    mock_completion.choices[0].message.content = (
+        '```json\n{"category": "team-syncs", "confidence": "high", "reasoning": "Internal standup."}\n```\n\nNote: This looks like a team meeting.'
+    )
+
+    with patch("classifier.openai.AsyncOpenAI") as MockClient:
+        instance = MockClient.return_value
+        instance.chat.completions.create = AsyncMock(return_value=mock_completion)
+
+        result = await classify_meeting(
+            title="Weekly standup",
+            participants=["alice@co.com"],
+            summary="Weekly team sync.",
+            transcript_excerpt="Alice: Any blockers?",
+        )
+
+    assert result.category == "team-syncs"
