@@ -49,26 +49,36 @@ class Transcript:
 
 class FirefliesClient:
     def __init__(self, api_key: str):
-        self._headers = {"Authorization": f"Bearer {api_key}"}
+        self._headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        self._client = httpx.AsyncClient(headers=self._headers, timeout=30.0)
 
     async def fetch_transcript(self, transcript_id: str) -> Transcript:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                FIREFLIES_GRAPHQL_URL,
-                json={"query": TRANSCRIPT_QUERY, "variables": {"id": transcript_id}},
-                headers=self._headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            data = response.json()["data"]["transcript"]
+        response = await self._client.post(
+            FIREFLIES_GRAPHQL_URL,
+            json={"query": TRANSCRIPT_QUERY, "variables": {"id": transcript_id}},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if "errors" in payload:
+            errors = payload["errors"]
+            msg = errors[0].get("message", "Unknown GraphQL error") if errors else "Unknown GraphQL error"
+            raise RuntimeError(f"Fireflies API error: {msg}")
+        data = payload.get("data", {})
 
-        summary = data.get("summary") or {}
+        transcript_data = data.get("transcript")
+        if transcript_data is None:
+            raise RuntimeError(f"Transcript not found: {transcript_id}")
+
+        summary = transcript_data.get("summary") or {}
         return Transcript(
-            id=data["id"],
-            title=data["title"],
-            date=data["date"],
-            duration=data["duration"],
-            participants=data.get("participants") or [],
+            id=transcript_data["id"],
+            title=transcript_data.get("title") or "",
+            date=transcript_data.get("date") or "",
+            duration=transcript_data["duration"],
+            participants=transcript_data.get("participants") or [],
             sentences=[
                 Sentence(
                     index=s["index"],
@@ -77,9 +87,12 @@ class FirefliesClient:
                     start_time=s["start_time"],
                     end_time=s["end_time"],
                 )
-                for s in data.get("sentences") or []
+                for s in transcript_data.get("sentences") or []
             ],
             summary_overview=summary.get("overview") or "",
             summary_action_items=summary.get("action_items") or [],
             summary_keywords=summary.get("keywords") or [],
         )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()

@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from fireflies import FirefliesClient, Transcript, Sentence
 
 @pytest.mark.asyncio
@@ -34,14 +34,10 @@ async def test_fetch_transcript_returns_transcript():
     mock_resp.json.return_value = mock_response
     mock_resp.raise_for_status = MagicMock()
 
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client_instance = AsyncMock()
-        MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client_instance)
-        MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_client_instance.post = AsyncMock(return_value=mock_resp)
+    client = FirefliesClient(api_key="test-key")
+    client._client.post = AsyncMock(return_value=mock_resp)
 
-        client = FirefliesClient(api_key="test-key")
-        transcript = await client.fetch_transcript("abc123")
+    transcript = await client.fetch_transcript("abc123")
 
     assert transcript.id == "abc123"
     assert transcript.title == "Customer call with Acme Corp"
@@ -74,15 +70,38 @@ async def test_fetch_transcript_handles_missing_summary():
     mock_resp.json.return_value = mock_response
     mock_resp.raise_for_status = MagicMock()
 
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client_instance = AsyncMock()
-        MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client_instance)
-        MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_client_instance.post = AsyncMock(return_value=mock_resp)
+    client = FirefliesClient(api_key="test-key")
+    client._client.post = AsyncMock(return_value=mock_resp)
 
-        client = FirefliesClient(api_key="test-key")
-        transcript = await client.fetch_transcript("xyz")
+    transcript = await client.fetch_transcript("xyz")
 
     assert transcript.summary_overview == ""
     assert transcript.summary_action_items == []
     assert transcript.summary_keywords == []
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_raises_on_graphql_error():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "errors": [{"message": "Transcript not found"}],
+        "data": None,
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    client = FirefliesClient(api_key="test-key")
+    client._client.post = AsyncMock(return_value=mock_resp)
+
+    with pytest.raises(RuntimeError, match="Fireflies API error"):
+        await client.fetch_transcript("bad-id")
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_raises_on_null_transcript():
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"data": {"transcript": None}}
+    mock_resp.raise_for_status = MagicMock()
+
+    client = FirefliesClient(api_key="test-key")
+    client._client.post = AsyncMock(return_value=mock_resp)
+
+    with pytest.raises(RuntimeError, match="Transcript not found"):
+        await client.fetch_transcript("bad-id")
