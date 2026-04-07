@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 FIREFLIES_API_KEY = os.environ["FIREFLIES_API_KEY"]
+# Optional: if empty, webhook signature verification is skipped (useful for local dev)
 FIREFLIES_WEBHOOK_SECRET = os.environ.get("FIREFLIES_WEBHOOK_SECRET", "")
 
 LITELLM_BASE_URL = "http://34.61.120.233:4000/v1"
