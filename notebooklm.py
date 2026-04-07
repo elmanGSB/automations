@@ -12,7 +12,14 @@ def create_notebook(title: str) -> str:
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to create notebook '{title}': {result.stderr.strip()}")
-    data = json.loads(result.stdout.strip())
+    raw = result.stdout.strip()
+    start = raw.find("{")
+    if start == -1:
+        raise RuntimeError(f"Failed to parse nlm output (no JSON found): {raw!r}")
+    try:
+        data = json.loads(raw[start:])
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to parse nlm output: {e!r}\nRaw: {raw!r}") from e
     return data["id"]
 
 

@@ -70,3 +70,15 @@ def test_notebook_title_for_known_category():
 def test_notebook_title_for_unknown_category():
     assert notebook_title_for_category("conference-panel") == "Conference Panel"
     assert notebook_title_for_category("podcast-interview") == "Podcast Interview"
+
+def test_create_notebook_handles_preamble_in_output():
+    """nlm CLI may emit warning lines before JSON."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = 'Warning: using cached auth\n{"id": "nb-99999", "title": "Test"}\n'
+    mock_result.stderr = ""
+
+    with patch("subprocess.run", return_value=mock_result):
+        notebook_id = create_notebook("Test")
+
+    assert notebook_id == "nb-99999"
