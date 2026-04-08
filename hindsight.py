@@ -3,7 +3,7 @@ import logging
 from fireflies import Transcript
 from classifier import ClassificationResult
 
-HINDSIGHT_URL = "http://34.61.120.233:8888/mcp/"
+HINDSIGHT_URL = "http://34.61.120.233:8888"
 HINDSIGHT_API_KEY = "Vm1q6fguODdSX3lCWfMGshObtNoVUD0zTKVaVSM2"
 BANK_ID = "broccoli-meetings"
 
@@ -14,66 +14,90 @@ _HEADERS = {
     "Content-Type": "application/json",
 }
 
-
-async def _call(payload: dict) -> None:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(HINDSIGHT_URL, headers=_HEADERS, json=payload)
-        resp.raise_for_status()
+# Category → participant_type mapping for entity labeling
+_CATEGORY_PARTICIPANT_TYPE = {
+    "customer-discovery": "customer",
+    "investor-calls": "investor",
+    "advisors": "advisor",
+    "team-syncs": "team",
+    "competitors": "customer",
+}
 
 
 async def retain_meeting(transcript: Transcript, classification: ClassificationResult) -> None:
-    """Store meeting summary and key insights into the Hindsight meetings bank."""
+    """Store meeting transcript context into the Hindsight meetings bank."""
     participants = ", ".join(transcript.participants) if transcript.participants else "Unknown"
-    excerpt = " ".join(s.text for s in transcript.sentences[:40])
+    # Use full transcript excerpt (up to 800 chars) for richer extraction
+    excerpt = " ".join(s.text for s in transcript.sentences[:60])[:1200]
 
     content = (
         f"Meeting: {transcript.title}\n"
-        f"Category: {classification.category} (confidence: {classification.confidence})\n"
+        f"Category: {classification.category}\n"
         f"Participants: {participants}\n"
         f"Summary: {transcript.summary_overview or 'No summary available'}\n"
-        f"Classification reasoning: {classification.reasoning}\n"
-        f"Transcript excerpt: {excerpt[:800]}"
+        f"Classification reasoning: {classification.reasoning}\n\n"
+        f"Transcript excerpt:\n{excerpt}"
     )
 
+    participant_type = _CATEGORY_PARTICIPANT_TYPE.get(classification.category, "customer")
+
     payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": "retain",
-            "arguments": {
+        "items": [
+            {
                 "content": content,
-                "context": classification.category,
+                "document_id": f"meeting-{transcript.id}",
+                "context": f"{classification.category} meeting with {participants}",
                 "tags": [
                     f"category:{classification.category}",
                     f"confidence:{classification.confidence}",
+                    f"participant_type:{participant_type}",
                 ],
-                "bank_id": BANK_ID,
-            },
-        },
+            }
+        ]
     }
-    await _call(payload)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/memories/retain",
+            headers=_HEADERS,
+            json=payload,
+        )
+        resp.raise_for_status()
 
 
 async def retain_novel_insights(meeting_title: str, category: str, novel_analysis: str) -> None:
-    """Store Prompt 2 novel insights from a single interview into Hindsight."""
+    """Store NotebookLM Prompt 2 novel insights for a meeting into Hindsight."""
     content = (
         f"Novel insights from interview: {meeting_title}\n"
         f"Category: {category}\n\n"
         f"{novel_analysis}"
     )
+
+    participant_type = _CATEGORY_PARTICIPANT_TYPE.get(category, "customer")
+
     payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": "retain",
-            "arguments": {
+        "items": [
+            {
                 "content": content,
-                "context": f"novel-insights:{category}",
-                "tags": [f"category:{category}", "type:novel-insight"],
-                "bank_id": BANK_ID,
-            },
-        },
+                "document_id": f"novel-insights-{meeting_title.lower().replace(' ', '-')[:60]}",
+                "context": f"Novel insights analysis for {category} interview",
+                "tags": [
+                    f"category:{category}",
+                    f"participant_type:{participant_type}",
+                    "type:novel-insight",
+                    "finding_type:pain-point",
+                    "finding_type:workaround",
+                    "finding_type:emotional-driver",
+                    "finding_type:quote",
+                ],
+            }
+        ]
     }
-    await _call(payload)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/memories/retain",
+            headers=_HEADERS,
+            json=payload,
+        )
+        resp.raise_for_status()
