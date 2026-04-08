@@ -5,20 +5,19 @@ from notebooklm import create_notebook, add_pdf_source, notebook_title_for_categ
 def test_create_notebook_returns_id():
     mock_result = MagicMock()
     mock_result.returncode = 0
-    mock_result.stdout = '{"id": "nb-12345", "title": "Customer Interviews & Sales"}\n'
+    mock_result.stdout = "✓ Created notebook: Customer Interviews & Sales\n  ID: a1b2c3d4-1234-5678-abcd-ef1234567890\n"
     mock_result.stderr = ""
 
     with patch("subprocess.run", return_value=mock_result) as mock_run:
         notebook_id = create_notebook("Customer Interviews & Sales")
 
-    assert notebook_id == "nb-12345"
+    assert notebook_id == "a1b2c3d4-1234-5678-abcd-ef1234567890"
     args = mock_run.call_args[0][0]
     assert "nlm" in args
     assert "notebook" in args
     assert "create" in args
     assert "Customer Interviews & Sales" in args
-    assert "--output" in args
-    assert "json" in args
+    assert "--output" not in args
 
 def test_add_pdf_source_calls_nlm_with_correct_args():
     mock_result = MagicMock()
@@ -72,13 +71,13 @@ def test_notebook_title_for_unknown_category():
     assert notebook_title_for_category("podcast-interview") == "Podcast Interview"
 
 def test_create_notebook_handles_preamble_in_output():
-    """nlm CLI may emit warning lines before JSON."""
+    """nlm CLI may emit warning lines before the ID line."""
     mock_result = MagicMock()
     mock_result.returncode = 0
-    mock_result.stdout = 'Warning: using cached auth\n{"id": "nb-99999", "title": "Test"}\n'
+    mock_result.stdout = "Warning: using cached auth\n✓ Created notebook: Test\n  ID: 99999999-9999-9999-9999-999999999999\n"
     mock_result.stderr = ""
 
     with patch("subprocess.run", return_value=mock_result):
         notebook_id = create_notebook("Test")
 
-    assert notebook_id == "nb-99999"
+    assert notebook_id == "99999999-9999-9999-9999-999999999999"
