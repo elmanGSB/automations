@@ -1,4 +1,4 @@
-import json
+import re
 import subprocess
 from config import KNOWN_CATEGORIES
 
@@ -6,21 +6,17 @@ from config import KNOWN_CATEGORIES
 def create_notebook(title: str) -> str:
     """Create a NotebookLM notebook. Returns the notebook ID."""
     result = subprocess.run(
-        ["nlm", "notebook", "create", title, "--output", "json"],
+        ["nlm", "notebook", "create", title],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to create notebook '{title}': {result.stderr.strip()}")
-    raw = result.stdout.strip()
-    start = raw.find("{")
-    if start == -1:
-        raise RuntimeError(f"Failed to parse nlm output (no JSON found): {raw!r}")
-    try:
-        data = json.loads(raw[start:])
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Failed to parse nlm output: {e!r}\nRaw: {raw!r}") from e
-    return data["id"]
+    # Output format: "✓ Created notebook: Title\n  ID: <uuid>"
+    match = re.search(r"ID:\s*([a-f0-9-]{36})", result.stdout)
+    if not match:
+        raise RuntimeError(f"Failed to parse notebook ID from output: {result.stdout!r}")
+    return match.group(1)
 
 
 def add_pdf_source(notebook_id: str, pdf_path: str, title: str) -> None:
