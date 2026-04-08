@@ -7,7 +7,7 @@ from config import LITELLM_BASE_URL, LITELLM_API_KEY, LITELLM_MODEL, KNOWN_CATEG
 SYSTEM_PROMPT = """You are classifying a meeting transcript into a category.
 
 Known categories:
-- customer-discovery: Customer interviews, user research, sales discovery calls, demos with prospects
+- customer-discovery: Customer interviews, sales discovery calls, demos with prospects, and conversations with anyone in the target market — including retailers, suppliers, distributors, or end-users — whose feedback informs the product or go-to-market strategy
 - investor-calls: Meetings with investors, VCs, angels, fundraising conversations
 - team-syncs: Internal team meetings, standups, retrospectives, planning sessions
 - competitors: Competitive analysis calls, conversations about or with competitors
