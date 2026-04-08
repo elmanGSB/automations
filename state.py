@@ -47,3 +47,17 @@ def save_notebook_id(category: str, notebook_id: str) -> None:
     data = _load()
     data[category] = notebook_id
     _save(data)
+
+
+def is_meeting_processed(meeting_id: str) -> bool:
+    """Return True if this meeting has already been processed."""
+    return meeting_id in _load().get("_processed", [])
+
+
+def mark_meeting_processed(meeting_id: str) -> None:
+    """Record a meeting ID as processed to prevent duplicate runs."""
+    data = _load()
+    processed = data.setdefault("_processed", [])
+    if meeting_id not in processed:
+        processed.append(meeting_id)
+    _save(data)

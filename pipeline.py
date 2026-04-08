@@ -5,7 +5,7 @@ from fireflies import FirefliesClient
 from classifier import classify_meeting
 from pdf_generator import generate_transcript_pdf
 from notebooklm import create_notebook, add_pdf_source, notebook_title_for_category
-from state import get_notebook_id, save_notebook_id
+from state import get_notebook_id, save_notebook_id, is_meeting_processed, mark_meeting_processed
 from notifier import notify_new_category
 from hindsight import retain_meeting, retain_novel_insights
 from analyzer import analyze_notebook
@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 async def process_meeting(meeting_id: str) -> None:
     """Full pipeline: fetch → classify → PDF → upload to NotebookLM."""
+    if is_meeting_processed(meeting_id):
+        logger.info("Meeting %s already processed, skipping", meeting_id)
+        return
+
     logger.info("Processing meeting %s", meeting_id)
 
     # 1. Fetch transcript from Fireflies
@@ -60,12 +64,15 @@ async def process_meeting(meeting_id: str) -> None:
     # 6. Email report to both founders
     await send_meeting_report(transcript.title, result.category, analysis)
 
-    # 7. Retain meeting context + novel insights in Hindsight
+    # 7. Mark meeting as processed before retaining (so crashes don't re-run email)
+    mark_meeting_processed(meeting_id)
+
+    # 8. Retain meeting context + novel insights in Hindsight
     await retain_meeting(transcript, result)
     await retain_novel_insights(transcript.title, result.category, analysis.novel)
     logger.info("Retained insights in Hindsight memory bank")
 
-    # 8. Notify only if notebook was newly created AND category is unknown
+    # 9. Notify only if notebook was newly created AND category is unknown
     if is_new_notebook and result.is_new_category:
         await notify_new_category(
             category=result.category,
