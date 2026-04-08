@@ -8,8 +8,8 @@ from notebooklm import create_notebook, add_pdf_source, notebook_title_for_categ
 from state import get_notebook_id, save_notebook_id, is_meeting_processed, mark_meeting_processed
 from notifier import notify_new_category
 from hindsight import retain_meeting, retain_novel_insights
-from analyzer import analyze_notebook
-from emailer import send_meeting_report
+from analyzer import analyze_novel
+from emailer import send_novel_report
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +57,12 @@ async def process_meeting(meeting_id: str) -> None:
         add_pdf_source(notebook_id, pdf_path, transcript.title)
         logger.info("Uploaded PDF to notebook %s", notebook_id)
 
-    # 5. Run both analysis prompts against the notebook
-    analysis = analyze_notebook(notebook_id)
-    logger.info("Completed notebook analysis")
+    # 5. Run novel insights prompt (Prompt 2) only — patterns run weekly
+    analysis = analyze_novel(notebook_id)
+    logger.info("Completed novel insights analysis")
 
-    # 6. Email report to both founders
-    await send_meeting_report(transcript.title, result.category, analysis)
+    # 6. Email novel insights report to both founders
+    await send_novel_report(transcript.title, result.category, analysis.novel)
 
     # 7. Mark meeting as processed before retaining (so crashes don't re-run email)
     mark_meeting_processed(meeting_id)

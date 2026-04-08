@@ -64,6 +64,11 @@ class AnalysisResult:
     novel: str
 
 
+@dataclass
+class NovelResult:
+    novel: str
+
+
 def query_notebook(notebook_id: str, prompt: str, timeout: float = 180) -> str:
     """Run a prompt against a NotebookLM notebook via nlm CLI. Returns clean answer text."""
     result = subprocess.run(
@@ -90,12 +95,22 @@ def query_notebook(notebook_id: str, prompt: str, timeout: float = 180) -> str:
     return answer.strip()
 
 
-def analyze_notebook(notebook_id: str) -> AnalysisResult:
-    """Run both analysis prompts against a notebook and return results."""
-    logger.info("Running patterns analysis on notebook %s", notebook_id)
-    patterns = query_notebook(notebook_id, PROMPT_PATTERNS)
-
+def analyze_novel(notebook_id: str) -> NovelResult:
+    """Run only Prompt 2 (novel insights) — used per meeting."""
     logger.info("Running novel insights analysis on notebook %s", notebook_id)
     novel = query_notebook(notebook_id, PROMPT_NOVEL)
+    return NovelResult(novel=novel)
 
-    return AnalysisResult(patterns=patterns, novel=novel)
+
+def analyze_patterns(notebook_id: str) -> str:
+    """Run only Prompt 1 (aggregate patterns) — used for weekly report."""
+    logger.info("Running patterns analysis on notebook %s", notebook_id)
+    return query_notebook(notebook_id, PROMPT_PATTERNS)
+
+
+def analyze_notebook(notebook_id: str) -> AnalysisResult:
+    """Run both prompts — kept for backwards compatibility."""
+    return AnalysisResult(
+        patterns=analyze_patterns(notebook_id),
+        novel=analyze_novel(notebook_id).novel,
+    )
