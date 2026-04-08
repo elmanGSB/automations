@@ -5,7 +5,7 @@ from classifier import ClassificationResult
 
 HINDSIGHT_URL = "http://34.61.120.233:8888/mcp/"
 HINDSIGHT_API_KEY = "Vm1q6fguODdSX3lCWfMGshObtNoVUD0zTKVaVSM2"
-BANK_ID = "meetings"
+BANK_ID = "broccoli-meetings"
 
 logger = logging.getLogger(__name__)
 
