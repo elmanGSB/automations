@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from fireflies import Transcript, Sentence
 from classifier import ClassificationResult
+from analyzer import AnalysisResult
 
 
 def make_transcript(meeting_id="abc123") -> Transcript:
@@ -21,6 +22,9 @@ def make_transcript(meeting_id="abc123") -> Transcript:
     )
 
 
+MOCK_ANALYSIS = AnalysisResult(patterns="Mock patterns output", novel="Mock novel insights")
+
+
 async def test_pipeline_routes_to_existing_notebook():
     """Known category with existing notebook: no create, no notify."""
     transcript = make_transcript()
@@ -36,6 +40,10 @@ async def test_pipeline_routes_to_existing_notebook():
         patch("pipeline.create_notebook") as mock_create,
         patch("pipeline.save_notebook_id") as mock_save,
         patch("pipeline.add_pdf_source") as mock_add,
+        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
+        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.retain_meeting", new_callable=AsyncMock),
+        patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
         patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
@@ -63,6 +71,10 @@ async def test_pipeline_creates_notebook_for_new_known_category():
         patch("pipeline.create_notebook", return_value="nb-new") as mock_create,
         patch("pipeline.save_notebook_id") as mock_save,
         patch("pipeline.add_pdf_source"),
+        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
+        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.retain_meeting", new_callable=AsyncMock),
+        patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
         patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
@@ -71,7 +83,7 @@ async def test_pipeline_creates_notebook_for_new_known_category():
 
     mock_create.assert_called_once()
     mock_save.assert_called_once_with("investor-calls", "nb-new")
-    mock_notify.assert_not_called()  # known category, no notification
+    mock_notify.assert_not_called()
 
 
 async def test_pipeline_creates_notebook_and_notifies_for_unknown_category():
@@ -89,6 +101,10 @@ async def test_pipeline_creates_notebook_and_notifies_for_unknown_category():
         patch("pipeline.create_notebook", return_value="nb-panel"),
         patch("pipeline.save_notebook_id"),
         patch("pipeline.add_pdf_source"),
+        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
+        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.retain_meeting", new_callable=AsyncMock),
+        patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
         patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
@@ -122,6 +138,10 @@ async def test_pipeline_passes_excerpt_to_classifier():
         patch("pipeline.generate_transcript_pdf", return_value="/tmp/t.pdf"),
         patch("pipeline.get_notebook_id", return_value="nb-x"),
         patch("pipeline.add_pdf_source"),
+        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
+        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.retain_meeting", new_callable=AsyncMock),
+        patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
         patch("pipeline.notify_new_category", new_callable=AsyncMock),
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
