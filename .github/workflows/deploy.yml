@@ -7,7 +7,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    needs: []  # runs independently — CI already passed for this commit
 
     steps:
       - name: Deploy to Paperclip VM
@@ -19,31 +18,21 @@ jobs:
           port: 22
           script: |
             set -e
+            export PATH="$HOME/.local/bin:$PATH"
 
-            REPO_URL="https://github.com/elmanGSB/automations.git"
             DEPLOY_DIR="$HOME/interview-router"
 
-            # Clone on first deploy, pull on subsequent ones
-            if [ -d "$DEPLOY_DIR/.git" ]; then
-              echo "==> Pulling latest code..."
-              cd "$DEPLOY_DIR"
-              git fetch origin
-              git reset --hard origin/main
-            else
-              echo "==> Cloning repo..."
-              git clone "$REPO_URL" "$DEPLOY_DIR"
-              cd "$DEPLOY_DIR"
-            fi
+            echo "==> Pulling latest code..."
+            cd "$DEPLOY_DIR"
+            git fetch origin
+            git reset --hard origin/main
 
-            echo "==> Installing dependencies..."
-            pip install -r requirements.txt -q
+            echo "==> Installing dependencies into venv..."
+            "$DEPLOY_DIR/venv/bin/pip" install -r requirements.txt -q
 
             echo "==> Restarting service..."
-            if sudo systemctl is-enabled interview-router &>/dev/null; then
-              sudo systemctl restart interview-router
-              echo "Service restarted."
-            else
-              echo "Service not yet installed — run vm-setup.sh first."
-            fi
+            sudo systemctl restart interview-router
+            sleep 2
+            sudo systemctl is-active interview-router
 
             echo "==> Deploy complete at $(date)"
