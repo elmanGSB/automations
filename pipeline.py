@@ -7,7 +7,9 @@ from pdf_generator import generate_transcript_pdf
 from notebooklm import create_notebook, add_pdf_source, notebook_title_for_category
 from state import get_notebook_id, save_notebook_id
 from notifier import notify_new_category
-from hindsight import retain_meeting
+from hindsight import retain_meeting, retain_novel_insights
+from analyzer import analyze_notebook
+from emailer import send_meeting_report
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +53,19 @@ async def process_meeting(meeting_id: str) -> None:
         add_pdf_source(notebook_id, pdf_path, transcript.title)
         logger.info("Uploaded PDF to notebook %s", notebook_id)
 
-    # 5. Retain meeting insights in Hindsight memory bank
-    await retain_meeting(transcript, result)
-    logger.info("Retained meeting in Hindsight memory bank")
+    # 5. Run both analysis prompts against the notebook
+    analysis = analyze_notebook(notebook_id)
+    logger.info("Completed notebook analysis")
 
-    # 6. Notify only if notebook was newly created AND category is unknown
+    # 6. Email report to both founders
+    await send_meeting_report(transcript.title, result.category, analysis)
+
+    # 7. Retain meeting context + novel insights in Hindsight
+    await retain_meeting(transcript, result)
+    await retain_novel_insights(transcript.title, result.category, analysis.novel)
+    logger.info("Retained insights in Hindsight memory bank")
+
+    # 8. Notify only if notebook was newly created AND category is unknown
     if is_new_notebook and result.is_new_category:
         await notify_new_category(
             category=result.category,
