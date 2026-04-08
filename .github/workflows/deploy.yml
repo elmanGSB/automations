@@ -30,9 +30,10 @@ jobs:
             echo "==> Installing dependencies into venv..."
             "$DEPLOY_DIR/venv/bin/pip" install -r requirements.txt -q
 
-            echo "==> Restarting service..."
-            sudo systemctl restart interview-router
+            echo "==> Restarting services..."
+            sudo systemctl restart interview-router telegram-bot
             sleep 2
             sudo systemctl is-active interview-router
+            sudo systemctl is-active telegram-bot
 
             echo "==> Deploy complete at $(date)"
