@@ -57,7 +57,7 @@ async def send_meeting_report(
     async with httpx.AsyncClient(timeout=30) as client:
         for recipient in RECIPIENTS:
             payload = {
-                "to": [{"email": recipient}],
+                "to": [recipient],
                 "subject": subject,
                 "text": text,
                 "html": html,
