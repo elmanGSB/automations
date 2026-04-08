@@ -49,6 +49,12 @@ def save_notebook_id(category: str, notebook_id: str) -> None:
     _save(data)
 
 
+def get_all_notebooks() -> dict:
+    """Return all category -> notebook ID mappings (excludes internal keys)."""
+    data = _load()
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
 def is_meeting_processed(meeting_id: str) -> bool:
     """Return True if this meeting has already been processed."""
     return meeting_id in _load().get("_processed", [])

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 from fireflies import Transcript, Sentence
 from classifier import ClassificationResult
-from analyzer import AnalysisResult
+from analyzer import NovelResult
 
 
 def make_transcript(meeting_id="abc123") -> Transcript:
@@ -22,17 +22,7 @@ def make_transcript(meeting_id="abc123") -> Transcript:
     )
 
 
-MOCK_ANALYSIS = AnalysisResult(patterns="Mock patterns output", novel="Mock novel insights")
-
-# Common patches shared across all pipeline tests
-COMMON_PATCHES = [
-    ("pipeline.is_meeting_processed", dict(return_value=False)),
-    ("pipeline.mark_meeting_processed", {}),
-    ("pipeline.analyze_notebook", dict(return_value=MOCK_ANALYSIS)),
-    ("pipeline.send_meeting_report", dict(new_callable=AsyncMock)),
-    ("pipeline.retain_meeting", dict(new_callable=AsyncMock)),
-    ("pipeline.retain_novel_insights", dict(new_callable=AsyncMock)),
-]
+MOCK_NOVEL = NovelResult(novel="Mock novel insights")
 
 
 async def test_pipeline_routes_to_existing_notebook():
@@ -53,8 +43,8 @@ async def test_pipeline_routes_to_existing_notebook():
         patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
         patch("pipeline.is_meeting_processed", return_value=False),
         patch("pipeline.mark_meeting_processed"),
-        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
-        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.analyze_novel", return_value=MOCK_NOVEL),
+        patch("pipeline.send_novel_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
     ):
@@ -100,8 +90,8 @@ async def test_pipeline_creates_notebook_for_new_known_category():
         patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
         patch("pipeline.is_meeting_processed", return_value=False),
         patch("pipeline.mark_meeting_processed"),
-        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
-        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.analyze_novel", return_value=MOCK_NOVEL),
+        patch("pipeline.send_novel_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
     ):
@@ -132,8 +122,8 @@ async def test_pipeline_creates_notebook_and_notifies_for_unknown_category():
         patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
         patch("pipeline.is_meeting_processed", return_value=False),
         patch("pipeline.mark_meeting_processed"),
-        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
-        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.analyze_novel", return_value=MOCK_NOVEL),
+        patch("pipeline.send_novel_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
     ):
@@ -171,8 +161,8 @@ async def test_pipeline_passes_excerpt_to_classifier():
         patch("pipeline.notify_new_category", new_callable=AsyncMock),
         patch("pipeline.is_meeting_processed", return_value=False),
         patch("pipeline.mark_meeting_processed"),
-        patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
-        patch("pipeline.send_meeting_report", new_callable=AsyncMock),
+        patch("pipeline.analyze_novel", return_value=MOCK_NOVEL),
+        patch("pipeline.send_novel_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
     ):

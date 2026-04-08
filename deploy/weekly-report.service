@@ -1,0 +1,11 @@
+[Unit]
+Description=Interview Router - Weekly Patterns Report
+After=network.target
+
+[Service]
+Type=oneshot
+User=elmanamador
+WorkingDirectory=/home/elmanamador/interview-router
+ExecStart=/home/elmanamador/interview-router/venv/bin/python weekly_report.py
+StandardOutput=journal
+StandardError=journal
