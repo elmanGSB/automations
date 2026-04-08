@@ -24,6 +24,16 @@ def make_transcript(meeting_id="abc123") -> Transcript:
 
 MOCK_ANALYSIS = AnalysisResult(patterns="Mock patterns output", novel="Mock novel insights")
 
+# Common patches shared across all pipeline tests
+COMMON_PATCHES = [
+    ("pipeline.is_meeting_processed", dict(return_value=False)),
+    ("pipeline.mark_meeting_processed", {}),
+    ("pipeline.analyze_notebook", dict(return_value=MOCK_ANALYSIS)),
+    ("pipeline.send_meeting_report", dict(new_callable=AsyncMock)),
+    ("pipeline.retain_meeting", dict(new_callable=AsyncMock)),
+    ("pipeline.retain_novel_insights", dict(new_callable=AsyncMock)),
+]
+
 
 async def test_pipeline_routes_to_existing_notebook():
     """Known category with existing notebook: no create, no notify."""
@@ -40,11 +50,13 @@ async def test_pipeline_routes_to_existing_notebook():
         patch("pipeline.create_notebook") as mock_create,
         patch("pipeline.save_notebook_id") as mock_save,
         patch("pipeline.add_pdf_source") as mock_add,
+        patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
+        patch("pipeline.is_meeting_processed", return_value=False),
+        patch("pipeline.mark_meeting_processed"),
         patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
         patch("pipeline.send_meeting_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
-        patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
         from pipeline import process_meeting
@@ -54,6 +66,20 @@ async def test_pipeline_routes_to_existing_notebook():
     mock_save.assert_not_called()
     mock_add.assert_called_once_with("nb-existing", "/tmp/t.pdf", transcript.title)
     mock_notify.assert_not_called()
+
+
+async def test_pipeline_skips_already_processed_meeting():
+    """Meeting already in _processed: pipeline exits immediately."""
+    with (
+        patch("pipeline.is_meeting_processed", return_value=True),
+        patch("pipeline.FirefliesClient") as MockFF,
+        patch("pipeline.classify_meeting", new_callable=AsyncMock) as mock_classify,
+    ):
+        from pipeline import process_meeting
+        await process_meeting("already-done")
+
+    mock_classify.assert_not_called()
+    MockFF.assert_not_called()
 
 
 async def test_pipeline_creates_notebook_for_new_known_category():
@@ -71,11 +97,13 @@ async def test_pipeline_creates_notebook_for_new_known_category():
         patch("pipeline.create_notebook", return_value="nb-new") as mock_create,
         patch("pipeline.save_notebook_id") as mock_save,
         patch("pipeline.add_pdf_source"),
+        patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
+        patch("pipeline.is_meeting_processed", return_value=False),
+        patch("pipeline.mark_meeting_processed"),
         patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
         patch("pipeline.send_meeting_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
-        patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
         from pipeline import process_meeting
@@ -101,11 +129,13 @@ async def test_pipeline_creates_notebook_and_notifies_for_unknown_category():
         patch("pipeline.create_notebook", return_value="nb-panel"),
         patch("pipeline.save_notebook_id"),
         patch("pipeline.add_pdf_source"),
+        patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
+        patch("pipeline.is_meeting_processed", return_value=False),
+        patch("pipeline.mark_meeting_processed"),
         patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
         patch("pipeline.send_meeting_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
-        patch("pipeline.notify_new_category", new_callable=AsyncMock) as mock_notify,
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
         from pipeline import process_meeting
@@ -138,11 +168,13 @@ async def test_pipeline_passes_excerpt_to_classifier():
         patch("pipeline.generate_transcript_pdf", return_value="/tmp/t.pdf"),
         patch("pipeline.get_notebook_id", return_value="nb-x"),
         patch("pipeline.add_pdf_source"),
+        patch("pipeline.notify_new_category", new_callable=AsyncMock),
+        patch("pipeline.is_meeting_processed", return_value=False),
+        patch("pipeline.mark_meeting_processed"),
         patch("pipeline.analyze_notebook", return_value=MOCK_ANALYSIS),
         patch("pipeline.send_meeting_report", new_callable=AsyncMock),
         patch("pipeline.retain_meeting", new_callable=AsyncMock),
         patch("pipeline.retain_novel_insights", new_callable=AsyncMock),
-        patch("pipeline.notify_new_category", new_callable=AsyncMock),
     ):
         MockFF.return_value.fetch_transcript = AsyncMock(return_value=transcript)
         from pipeline import process_meeting
