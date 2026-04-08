@@ -21,4 +21,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests
+        env:
+          FIREFLIES_API_KEY: ci-dummy-key
+          FIREFLIES_WEBHOOK_SECRET: ci-dummy-secret
+          TELEGRAM_BOT_TOKEN: ci-dummy-token
+          TELEGRAM_CHAT_ID: "000000"
         run: pytest tests/ -v --tb=short
