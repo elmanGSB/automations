@@ -1,3 +1,5 @@
+import re
+import json
 import subprocess
 import logging
 from dataclasses import dataclass
@@ -63,7 +65,7 @@ class AnalysisResult:
 
 
 def query_notebook(notebook_id: str, prompt: str, timeout: float = 180) -> str:
-    """Run a prompt against a NotebookLM notebook via nlm CLI."""
+    """Run a prompt against a NotebookLM notebook via nlm CLI. Returns clean answer text."""
     result = subprocess.run(
         ["nlm", "notebook", "query", notebook_id, prompt, "--timeout", str(timeout)],
         capture_output=True,
@@ -72,7 +74,20 @@ def query_notebook(notebook_id: str, prompt: str, timeout: float = 180) -> str:
     )
     if result.returncode != 0:
         raise RuntimeError(f"nlm query failed: {result.stderr.strip()}")
-    return result.stdout.strip()
+
+    raw = result.stdout.strip()
+
+    # nlm returns JSON — extract just the answer field
+    try:
+        data = json.loads(raw)
+        answer = data.get("value", {}).get("answer") or data.get("answer") or raw
+    except (json.JSONDecodeError, AttributeError):
+        answer = raw
+
+    # Strip inline citation numbers like [1], [1-3], [1, 2, 3]
+    answer = re.sub(r'\s*\[[\d,\s\-]+\]', '', answer)
+
+    return answer.strip()
 
 
 def analyze_notebook(notebook_id: str) -> AnalysisResult:
