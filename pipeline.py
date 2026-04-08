@@ -1,5 +1,6 @@
 import logging
 import tempfile
+from datetime import date as date_type
 from config import FIREFLIES_API_KEY
 from fireflies import FirefliesClient
 from classifier import classify_meeting
@@ -10,6 +11,7 @@ from notifier import notify_new_category
 from hindsight import retain_meeting, retain_novel_insights
 from analyzer import analyze_novel
 from emailer import send_novel_report
+from discovery_extractor import process_discovery_meeting
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,23 @@ async def process_meeting(meeting_id: str) -> None:
     logger.info(
         "Classified as '%s' (%s): %s", result.category, result.confidence, result.reasoning
     )
+
+    # 2b. If customer-discovery, run discovery extraction pipeline
+    if result.category == "customer-discovery":
+        try:
+            full_text = "\n".join(
+                f"{s.speaker_name}: {s.text}" for s in transcript.sentences
+            )
+            discovery_result = await process_discovery_meeting(
+                transcript_text=full_text,
+                participant_name=transcript.participants[0] if transcript.participants else "Unknown",
+                meeting_title=transcript.title,
+                meeting_date=str(date_type.today()),
+                fireflies_meeting_id=meeting_id,
+            )
+            logger.info("Discovery extraction complete: %s", discovery_result)
+        except Exception:
+            logger.exception("Discovery extraction failed for meeting %s (continuing pipeline)", meeting_id)
 
     # 3. Get or create the notebook for this category
     notebook_id = get_notebook_id(result.category)

@@ -1,8 +1,10 @@
 import json
 import re
 from dataclasses import dataclass
-import openai
-from config import LITELLM_BASE_URL, LITELLM_API_KEY, LITELLM_MODEL, KNOWN_CATEGORIES
+import httpx
+from config import KNOWN_CATEGORIES
+
+CLAUDE_PROXY_URL = "http://127.0.0.1:8199/v1/messages"
 
 SYSTEM_PROMPT = """You are classifying a meeting transcript into a category.
 
@@ -25,7 +27,6 @@ If none of the known categories fit, invent a short descriptive slug (e.g. "conf
 
 def _extract_json(text: str) -> dict:
     """Extract JSON from LLM response, handling markdown code blocks and trailing commentary."""
-    # Try to extract content between code fences first
     match = re.search(r"```(?:json)?\n?(.*?)\n?```", text, re.DOTALL)
     if match:
         text = match.group(1).strip()
@@ -51,8 +52,6 @@ async def classify_meeting(
     summary: str,
     transcript_excerpt: str,
 ) -> ClassificationResult:
-    client = openai.AsyncOpenAI(base_url=LITELLM_BASE_URL, api_key=LITELLM_API_KEY)
-
     user_message = (
         f"Title: {title}\n"
         f"Participants: {', '.join(participants)}\n"
@@ -60,24 +59,29 @@ async def classify_meeting(
         f"Transcript excerpt (first 500 chars): {transcript_excerpt[:500]}"
     )
 
-    response = await client.chat.completions.create(
-        model=LITELLM_MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=0.0,
-        max_tokens=200,
-    )
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            CLAUDE_PROXY_URL,
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 200,
+                "system": SYSTEM_PROMPT,
+                "messages": [{"role": "user", "content": user_message}],
+            },
+            headers={"x-api-key": "not-needed", "Content-Type": "application/json"},
+        )
+        response.raise_for_status()
 
-    raw = response.choices[0].message.content.strip()
+    data = response.json()
+    raw = data["content"][0]["text"].strip()
+
     try:
-        data = _extract_json(raw)
+        parsed = _extract_json(raw)
     except (json.JSONDecodeError, ValueError) as e:
-        raise ValueError(f"Failed to parse classifier response: {e!r}\nRaw response: {raw!r}") from e
+        raise ValueError(f"Failed to parse classifier response: {e!r}\nRaw: {raw!r}") from e
 
     return ClassificationResult(
-        category=data["category"],
-        confidence=data["confidence"],
-        reasoning=data["reasoning"],
+        category=parsed["category"],
+        confidence=parsed["confidence"],
+        reasoning=parsed["reasoning"],
     )
