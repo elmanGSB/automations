@@ -9,7 +9,8 @@ from analyzer import query_notebook
 logger = logging.getLogger(__name__)
 
 # Authorized chat IDs — only these users can query notebooks
-AUTHORIZED_CHAT_IDS: set[str] = {str(TELEGRAM_CHAT_ID)} if TELEGRAM_CHAT_ID else set()
+_COFOUNDER_CHAT_ID = "8799013186"
+AUTHORIZED_CHAT_IDS: set[str] = {str(TELEGRAM_CHAT_ID), _COFOUNDER_CHAT_ID} if TELEGRAM_CHAT_ID else {_COFOUNDER_CHAT_ID}
 
 BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
