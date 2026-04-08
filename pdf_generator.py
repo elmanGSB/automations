@@ -48,7 +48,13 @@ def generate_transcript_pdf(transcript: Transcript, output_dir: str) -> str:
     text_style = ParagraphStyle("Body", parent=styles["Normal"], fontSize=10, leading=14)
     bullet_style = ParagraphStyle("Bullet", parent=styles["Normal"], fontSize=10, leftIndent=12)
 
-    date_str = transcript.date[:10] if transcript.date else "Unknown date"
+    if not transcript.date:
+        date_str = "Unknown date"
+    elif isinstance(transcript.date, int):
+        from datetime import datetime, timezone
+        date_str = datetime.fromtimestamp(transcript.date / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    else:
+        date_str = str(transcript.date)[:10]
     duration_min = transcript.duration // 60 if transcript.duration else 0
 
     story = [
