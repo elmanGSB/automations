@@ -13,19 +13,19 @@ async def test_health_endpoint():
     assert response.json() == {"status": "ok"}
 
 async def test_webhook_accepted_for_transcription_complete():
+    from importlib import reload
+    import main as main_mod
+    reload(main_mod)
     with (
         patch("main.FIREFLIES_WEBHOOK_SECRET", ""),
         patch("main.process_meeting", new_callable=AsyncMock) as mock_process,
     ):
-        from importlib import import_module, reload
-        import main as main_mod
-        reload(main_mod)
         async with AsyncClient(
             transport=ASGITransport(app=main_mod.app), base_url="http://test"
         ) as client:
             response = await client.post(
                 "/webhook/fireflies",
-                json={"eventType": "Transcription complete", "meetingId": "abc123"},
+                json={"event": "meeting.transcribed", "meeting_id": "abc123"},
             )
     assert response.status_code == 200
     assert response.json()["status"] == "accepted"
@@ -41,7 +41,7 @@ async def test_webhook_ignores_other_events():
         ) as client:
             response = await client.post(
                 "/webhook/fireflies",
-                json={"eventType": "Meeting started", "meetingId": "abc123"},
+                json={"event": "meeting.started", "meeting_id": "abc123"},
             )
     assert response.status_code == 200
     assert response.json()["status"] == "ignored"
@@ -49,7 +49,7 @@ async def test_webhook_ignores_other_events():
 async def test_webhook_validates_signature_when_secret_set():
     import hmac, hashlib, json as jsonlib
     secret = "test-secret"
-    body = jsonlib.dumps({"eventType": "Transcription complete", "meetingId": "abc123"}).encode()
+    body = jsonlib.dumps({"event": "meeting.transcribed", "meeting_id": "abc123"}).encode()
     sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
     with patch("main.FIREFLIES_WEBHOOK_SECRET", secret):
@@ -76,7 +76,7 @@ async def test_webhook_rejects_bad_signature():
         ) as client:
             response = await client.post(
                 "/webhook/fireflies",
-                json={"eventType": "Transcription complete", "meetingId": "abc123"},
+                json={"event": "meeting.transcribed", "meeting_id": "abc123"},
                 headers={"x-hub-signature": "sha256=badsignature"},
             )
     assert response.status_code == 401
@@ -91,6 +91,6 @@ async def test_webhook_rejects_missing_meeting_id():
         ) as client:
             response = await client.post(
                 "/webhook/fireflies",
-                json={"eventType": "Transcription complete"},
+                json={"event": "meeting.transcribed"},
             )
     assert response.status_code == 400
