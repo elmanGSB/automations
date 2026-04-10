@@ -1,4 +1,5 @@
 import httpx
+import json
 import logging
 from fireflies import Transcript
 from classifier import ClassificationResult
@@ -14,7 +15,7 @@ _HEADERS = {
     "Content-Type": "application/json",
 }
 
-# Category → participant_type mapping for entity labeling
+# Category -> participant_type mapping for entity labeling
 _CATEGORY_PARTICIPANT_TYPE = {
     "customer-discovery": "customer",
     "investor-calls": "investor",
@@ -24,10 +25,39 @@ _CATEGORY_PARTICIPANT_TYPE = {
 }
 
 
+async def _mcp_retain(content: str, context: str, tags: list[str], document_id: str) -> None:
+    """Call the Hindsight MCP retain tool via JSON-RPC over SSE."""
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": "retain",
+            "arguments": {
+                "content": content,
+                "context": context,
+                "tags": tags,
+                "document_id": document_id,
+                "bank_id": BANK_ID,
+            },
+        },
+        "id": 1,
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(f"{HINDSIGHT_URL}/mcp/", headers=_HEADERS, json=payload)
+        resp.raise_for_status()
+        # SSE response: parse the data line
+        for line in resp.text.splitlines():
+            if line.startswith("data: "):
+                data = json.loads(line[6:])
+                if "error" in data:
+                    raise RuntimeError(f"MCP retain error: {data['error']}")
+                return
+        logger.warning("No data line in MCP response: %s", resp.text[:200])
+
+
 async def retain_meeting(transcript: Transcript, classification: ClassificationResult) -> None:
     """Store meeting transcript context into the Hindsight meetings bank."""
     participants = ", ".join(transcript.participants) if transcript.participants else "Unknown"
-    # Use full transcript excerpt (up to 800 chars) for richer extraction
     excerpt = " ".join(s.text for s in transcript.sentences[:60])[:1200]
 
     content = (
@@ -40,29 +70,18 @@ async def retain_meeting(transcript: Transcript, classification: ClassificationR
     )
 
     participant_type = _CATEGORY_PARTICIPANT_TYPE.get(classification.category, "customer")
+    tags = [
+        f"category:{classification.category}",
+        f"confidence:{classification.confidence}",
+        f"participant_type:{participant_type}",
+    ]
 
-    payload = {
-        "items": [
-            {
-                "content": content,
-                "document_id": f"meeting-{transcript.id}",
-                "context": f"{classification.category} meeting with {participants}",
-                "tags": [
-                    f"category:{classification.category}",
-                    f"confidence:{classification.confidence}",
-                    f"participant_type:{participant_type}",
-                ],
-            }
-        ]
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/memories/retain",
-            headers=_HEADERS,
-            json=payload,
-        )
-        resp.raise_for_status()
+    await _mcp_retain(
+        content=content,
+        context=f"{classification.category} meeting with {participants}",
+        tags=tags,
+        document_id=f"meeting-{transcript.id}",
+    )
 
 
 async def retain_novel_insights(meeting_title: str, category: str, novel_analysis: str) -> None:
@@ -74,30 +93,15 @@ async def retain_novel_insights(meeting_title: str, category: str, novel_analysi
     )
 
     participant_type = _CATEGORY_PARTICIPANT_TYPE.get(category, "customer")
+    tags = [
+        f"category:{category}",
+        f"participant_type:{participant_type}",
+        "type:novel-insight",
+    ]
 
-    payload = {
-        "items": [
-            {
-                "content": content,
-                "document_id": f"novel-insights-{meeting_title.lower().replace(' ', '-')[:60]}",
-                "context": f"Novel insights analysis for {category} interview",
-                "tags": [
-                    f"category:{category}",
-                    f"participant_type:{participant_type}",
-                    "type:novel-insight",
-                    "finding_type:pain-point",
-                    "finding_type:workaround",
-                    "finding_type:emotional-driver",
-                    "finding_type:quote",
-                ],
-            }
-        ]
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{HINDSIGHT_URL}/v1/default/banks/{BANK_ID}/memories/retain",
-            headers=_HEADERS,
-            json=payload,
-        )
-        resp.raise_for_status()
+    await _mcp_retain(
+        content=content,
+        context=f"Novel insights analysis for {category} interview",
+        tags=tags,
+        document_id=f"novel-insights-{meeting_title.lower().replace(' ', '-')[:60]}",
+    )

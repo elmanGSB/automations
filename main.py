@@ -36,6 +36,11 @@ def verify_signature(payload: bytes, signature_header: str, secret: str) -> bool
 async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
 
+    # Log raw body for debugging empty webhook payloads
+    logger.info("Webhook raw body (%d bytes) from %s: %s",
+                len(body), request.client.host if request.client else "unknown",
+                body[:500].decode(errors="replace"))
+
     secret = _get_secret()
     if secret:
         signature = request.headers.get("x-hub-signature", "")
@@ -43,12 +48,12 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
             raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = await request.json()
-    event_type = payload.get("eventType", "")
-    meeting_id = payload.get("meetingId")
+    event_type = payload.get("event", "")
+    meeting_id = payload.get("meeting_id")
 
     logger.info("Received event: %s for meeting %s", event_type, meeting_id)
 
-    if event_type != "Transcription complete":
+    if event_type != "meeting.transcribed":
         return {"status": "ignored", "event": event_type}
 
     if not meeting_id:
@@ -61,7 +66,7 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
             logger.exception("Pipeline failed for meeting %s", mid)
 
     background_tasks.add_task(_run_pipeline, meeting_id)
-    return {"status": "accepted", "meetingId": meeting_id}
+    return {"status": "accepted", "meetingId": meeting_id}  # meeting_id from payload
 
 
 @app.get("/health")
