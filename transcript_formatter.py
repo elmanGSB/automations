@@ -58,6 +58,7 @@ def format_external_with_context(
                 context = " ".join(pending_internal)
                 lines.append(f"\n[CONTEXT/QUESTION] {context}")
                 pending_internal = []
+                current_speaker = None  # force header after any context block
             if speaker != current_speaker:
                 current_speaker = speaker
                 lines.append(f"\n{EXTERNAL_LABEL} {speaker}:")

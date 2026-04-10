@@ -47,3 +47,16 @@ def test_unknown_speaker_treated_as_external():
     sentences = [_s("Stranger", "Hello")]
     result = format_with_roles(sentences, {})
     assert "[INTERVIEWEE] Stranger:" in result
+
+
+def test_format_external_repeated_context_blocks_keep_speaker_header():
+    """Same external speaker after a second context block still gets their header."""
+    sentences = [
+        _s("Elman", "Question 1?"),
+        _s("Jacob", "Answer 1."),
+        _s("Elman", "Question 2?"),
+        _s("Jacob", "Answer 2."),
+    ]
+    result = format_external_with_context(sentences, ROLE_MAP)
+    assert result.count("[INTERVIEWEE] Jacob:") == 2
+    assert "Answer 2." in result
