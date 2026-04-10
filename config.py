@@ -23,3 +23,9 @@ KNOWN_CATEGORIES = {
     "competitors": "Competitor Research",
     "advisors": "Advisors",
 }
+
+INTERNAL_TEAM_NAMES = [
+    "elman",
+    "klara",
+    "broccoli",
+]
