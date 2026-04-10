@@ -14,6 +14,8 @@ from datetime import date as date_type
 import asyncpg
 import httpx
 
+from teable_client import TeableClient
+
 logger = logging.getLogger(__name__)
 
 CLAUDE_PROXY_URL = "http://127.0.0.1:8199/v1/messages"
@@ -68,7 +70,11 @@ JSON Schema:
   "memorable_quotes": ["top 3-5 quotable lines"]
 }"""
 
-EXTRACTION_USER_PROMPT = """Analyze this interview and extract:
+EXTRACTION_USER_PROMPT = """IMPORTANT — Speaker labels in this transcript:
+- [CONTEXT/QUESTION]: A question or prompt from the Broccoli team. Use ONLY as context to understand the interviewee next response. Do NOT extract insights from these lines.
+- [INTERVIEWEE]: The external participant statements. Extract ALL insights, quotes, behaviors, and pain points EXCLUSIVELY from [INTERVIEWEE] lines.
+
+Analyze this interview and extract:
 
 1. **Summary**: 2-3 sentences — who is this person, what do they need, key takeaway
 
@@ -244,6 +250,47 @@ async def store_extraction(
             clusters_count += 1
         logger.info("  %d clusters inserted", clusters_count)
 
+        # Dual-write to Teable (best-effort — don't fail the pipeline if Teable is down)
+        try:
+            teable = TeableClient()
+            teable.write_interview(
+                participant_name=participant_name,
+                date=str(interview_date),
+                participant_role=extraction.get("participant_role") or "",
+                company_name=extraction.get("company_name") or "",
+                interviewee_type=extraction["interviewee_type"],
+                product_categories=extraction.get("product_categories"),
+                behavioral_segment=extraction.get("behavioral_segment") or "",
+                demographics=extraction.get("demographics") or "",
+                summary=extraction.get("summary") or "",
+                fireflies_meeting_id=fireflies_meeting_id or "",
+            )
+            teable.write_insights([
+                {
+                    "interview": participant_name,
+                    "type": ins["type"],
+                    "category": ins.get("category") or "",
+                    "content": ins["content"],
+                    "severity": ins.get("severity") or "",
+                    "sentiment": ins.get("sentiment") or "",
+                    "quote": ins.get("verbatim_quote") or "",
+                }
+                for ins in extraction.get("insights", [])
+            ])
+            teable.write_clusters([
+                {
+                    "user_type": cl["user_type"],
+                    "need": cl["need"],
+                    "insight": cl["insight"],
+                    "quote": cl.get("memorable_quote") or "",
+                    "category": cl.get("category") or "",
+                }
+                for cl in extraction.get("clusters", [])
+            ])
+            logger.info("  Teable dual-write: 1 interview, %d insights, %d clusters", insights_count, clusters_count)
+        except Exception as e:
+            logger.warning("Teable dual-write failed (non-fatal): %s", e)
+
         return {
             "interview_id": interview_id,
             "insights": insights_count,
@@ -262,6 +309,7 @@ async def process_discovery_meeting(
     meeting_title: str | None = None,
     meeting_date: str | None = None,
     fireflies_meeting_id: str | None = None,
+    role_map: dict[str, str] | None = None,  # accepted, reserved for future use
 ) -> dict:
     """Full extraction pipeline: call Claude → parse → store in Postgres."""
     logger.info("Running discovery extraction for '%s'", meeting_title or participant_name)
