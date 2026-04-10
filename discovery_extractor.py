@@ -71,7 +71,7 @@ JSON Schema:
 }"""
 
 EXTRACTION_USER_PROMPT = """IMPORTANT — Speaker labels in this transcript:
-- [CONTEXT/QUESTION]: A question or prompt from the Broccoli team. Use ONLY as context to understand the interviewee next response. Do NOT extract insights from these lines.
+- [CONTEXT/QUESTION] Name: A question from a Broccoli team member (includes their name). Use as context to understand what the interviewee was responding to. Do NOT extract insights from these lines.
 - [INTERVIEWEE]: The external participant statements. Extract ALL insights, quotes, behaviors, and pain points EXCLUSIVELY from [INTERVIEWEE] lines.
 
 Analyze this interview and extract:

@@ -44,7 +44,7 @@ def format_external_with_context(
     Trailing internal-only lines are intentionally omitted.
     """
     lines: list[str] = []
-    pending_internal: list[str] = []
+    pending_internal: list[tuple[str, str]] = []  # (speaker, text)
     current_speaker: str | None = None
 
     for sentence in sentences:
@@ -52,11 +52,11 @@ def format_external_with_context(
         role = role_map.get(speaker, "external")
 
         if role == "internal":
-            pending_internal.append(sentence.text)
+            pending_internal.append((speaker, sentence.text))
         else:
             if pending_internal:
-                context = " ".join(pending_internal)
-                lines.append(f"\n[CONTEXT/QUESTION] {context}")
+                for spk, txt in pending_internal:
+                    lines.append(f"\n[CONTEXT/QUESTION] {spk}: {txt}")
                 pending_internal = []
                 current_speaker = None  # force header after any context block
             if speaker != current_speaker:

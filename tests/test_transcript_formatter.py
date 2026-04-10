@@ -30,8 +30,7 @@ def test_format_external_with_context_includes_question_as_context():
         _s("Jacob", "Delivery tracking is broken."),
     ]
     result = format_external_with_context(sentences, ROLE_MAP)
-    assert "[CONTEXT/QUESTION]" in result
-    assert "What's your biggest pain point?" in result
+    assert "[CONTEXT/QUESTION] Elman: What's your biggest pain point?" in result
     assert "[INTERVIEWEE] Jacob:" in result
     assert "Delivery tracking is broken." in result
 
