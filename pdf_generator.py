@@ -20,7 +20,7 @@ def _safe_filename(title: str) -> str:
     return slug[:60]
 
 
-def generate_transcript_pdf(transcript: Transcript, output_dir: str) -> str:
+def generate_transcript_pdf(transcript: Transcript, output_dir: str, role_map: dict[str, str] | None = None) -> str:
     """Generate a PDF from a transcript. Returns the path to the created file."""
     filename = f"{_safe_filename(transcript.title)}-{transcript.id[:8]}.pdf"
     output_path = os.path.join(output_dir, filename)
@@ -43,6 +43,13 @@ def generate_transcript_pdf(transcript: Transcript, output_dir: str) -> str:
         parent=styles["Normal"],
         fontSize=10,
         textColor=colors.HexColor("#1a56db"),
+        fontName="Helvetica-Bold",
+    )
+    internal_speaker_style = ParagraphStyle(
+        "InternalSpeaker",
+        parent=styles["Normal"],
+        fontSize=10,
+        textColor=colors.HexColor("#6b7280"),
         fontName="Helvetica-Bold",
     )
     text_style = ParagraphStyle("Body", parent=styles["Normal"], fontSize=10, leading=14)
@@ -91,9 +98,17 @@ def generate_transcript_pdf(transcript: Transcript, output_dir: str) -> str:
     if transcript.sentences:
         current_speaker = None
         for sentence in transcript.sentences:
-            if sentence.speaker_name != current_speaker:
-                current_speaker = sentence.speaker_name
-                story.append(Paragraph(_esc(current_speaker), speaker_style))
+            spk = sentence.speaker_name
+            if spk != current_speaker:
+                current_speaker = spk
+                role = (role_map or {}).get(spk, "external")
+                if role == "internal":
+                    label = f"[BROCCOLI TEAM] {spk}"
+                    style = internal_speaker_style
+                else:
+                    label = f"[INTERVIEWEE] {spk}"
+                    style = speaker_style
+                story.append(Paragraph(_esc(label), style))
             story.append(Paragraph(_esc(sentence.text), text_style))
     else:
         story.append(Paragraph("(No transcript available)", meta_style))
