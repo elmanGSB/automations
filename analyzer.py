@@ -6,7 +6,16 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATTERNS = """Analyze these interview transcripts and extract insights in the following categories. Always include direct quotes and note patterns across multiple interviews.
+_SPEAKER_INSTRUCTION = (
+    "IMPORTANT: The transcripts use two speaker labels — "
+    "[BROCCOLI TEAM] for internal team facilitation questions "
+    "(do NOT extract these as insights — they are prompts, not data) "
+    "and [INTERVIEWEE] for external participants "
+    "(extract ALL insights exclusively from [INTERVIEWEE] lines). "
+    "Internal team questions provide context only.\n\n"
+)
+
+PROMPT_PATTERNS = _SPEAKER_INSTRUCTION + """Analyze these interview transcripts and extract insights in the following categories. Always include direct quotes and note patterns across multiple interviews.
 
 1. Pain Points & Frustrations
 Extract recurring problems, broken processes, time-consuming tasks, and gaps between expectations vs. reality. Provide direct quotes and frequency.
@@ -33,7 +42,7 @@ For each category, provide:
 
 Always use direct quotes rather than paraphrasing. Show frequency — note how many people mentioned similar things. Provide context for when/why quotes were made. Connect categories — show relationships between pain points and solutions. Flag contradictions when interviewees disagree. Prioritize insights revealing genuine user needs, strong emotions, and innovation opportunities."""
 
-PROMPT_NOVEL = """Analyze the newest interview transcript against all previous interviews to identify completely novel insights, pain points, behaviors, emotions, and quotes that have never appeared before. Focus on genuinely new information, not variations of existing themes.
+PROMPT_NOVEL = _SPEAKER_INSTRUCTION + """Analyze the newest interview transcript against all previous interviews to identify completely novel insights, pain points, behaviors, emotions, and quotes that have never appeared before. Focus on genuinely new information, not variations of existing themes.
 
 Analysis Categories:
 
