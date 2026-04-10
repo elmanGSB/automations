@@ -21,6 +21,13 @@ Known categories:
 - competitors: Competitive analysis calls, conversations about or with competitors
 - advisors: Advisor meetings, mentor conversations, board advisor check-ins
 
+Stanford GSB classes (use the specific slug, not a generic one):
+- class-mge: Managing Growing Enterprises
+- class-sales: Building Sales Organizations
+- class-leadership: The Art of Leading in Challenging Times
+- class-taxes: Taxes and Business Strategy
+- class-fsa: Financial Statement Analysis
+
 Return ONLY a JSON object with no other text:
 {
   "category": "<category slug — use a known one or create a new descriptive slug>",
@@ -28,7 +35,7 @@ Return ONLY a JSON object with no other text:
   "reasoning": "<one sentence>"
 }
 
-If none of the known categories fit, invent a short descriptive slug (e.g. "conference-panel", "podcast-interview", "class-lecture")."""
+If none of the known categories fit, invent a short descriptive slug (e.g. "conference-panel", "podcast-interview")."""
 
 
 def _extract_json(text: str) -> dict:

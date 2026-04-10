@@ -22,6 +22,12 @@ KNOWN_CATEGORIES = {
     "team-syncs": "Team Syncs",
     "competitors": "Competitor Research",
     "advisors": "Advisors",
+    # Stanford GSB classes (Q3 2026)
+    "class-mge": "MGE — Managing Growing Enterprises",
+    "class-sales": "Sales — Building Sales Organizations",
+    "class-leadership": "Leadership — Art of Leading in Challenging Times",
+    "class-taxes": "Taxes — Taxes and Business Strategy",
+    "class-fsa": "FSA — Financial Statement Analysis",
 }
 
 INTERNAL_TEAM_NAMES = [
