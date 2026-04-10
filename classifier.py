@@ -8,6 +8,12 @@ CLAUDE_PROXY_URL = "http://127.0.0.1:8199/v1/messages"
 
 SYSTEM_PROMPT = """You are classifying a meeting transcript into a category.
 
+The transcript uses two speaker labels:
+- [BROCCOLI TEAM]: Internal team members (Elman, Klara, etc.) — their words are facilitation questions and context only. Do NOT use these to determine the meeting type.
+- [INTERVIEWEE]: The external party — their identity and what they discuss determines the category.
+
+Base your classification on WHO the external [INTERVIEWEE] party is and what they do.
+
 Known categories:
 - customer-discovery: Customer interviews, sales discovery calls, demos with prospects, and conversations with anyone in the target market — including retailers, suppliers, distributors, or end-users — whose feedback informs the product or go-to-market strategy
 - investor-calls: Meetings with investors, VCs, angels, fundraising conversations
@@ -56,7 +62,7 @@ async def classify_meeting(
         f"Title: {title}\n"
         f"Participants: {', '.join(participants)}\n"
         f"Summary: {summary}\n"
-        f"Transcript excerpt (first 500 chars): {transcript_excerpt[:500]}"
+        f"Labeled transcript excerpt (first 500 chars):\n{transcript_excerpt[:500]}"
     )
 
     async with httpx.AsyncClient(timeout=60.0) as client:
