@@ -8,6 +8,7 @@ No BAML dependency — prompt is embedded directly.
 
 import json
 import logging
+import os
 import re
 from datetime import date as date_type
 
@@ -19,7 +20,10 @@ from teable_client import TeableClient
 logger = logging.getLogger(__name__)
 
 CLAUDE_PROXY_URL = "http://127.0.0.1:8199/v1/messages"
-DATABASE_URL = "postgresql://paperclip:paperclip@127.0.0.1:5432/discovery"
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://paperclip:paperclip@127.0.0.1:5432/discovery",
+)
 
 EXTRACTION_SYSTEM_PROMPT = """You are a customer discovery analyst for a food distribution startup. You analyze
 interviews with DISTRIBUTORS (food distribution companies), RETAILERS (grocery stores,
