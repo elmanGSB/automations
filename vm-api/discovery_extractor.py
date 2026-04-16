@@ -159,6 +159,7 @@ async def extract_discovery_insights(
 
 
 async def store_extraction(
+    pool: asyncpg.Pool,
     extraction: dict,
     participant_name: str,
     interview_date: date_type,
@@ -168,142 +169,138 @@ async def store_extraction(
     channel: str = "call",
 ) -> dict:
     """Insert extracted data into the discovery Postgres database."""
-    pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
-
-    try:
-        # Check for duplicates
-        if fireflies_meeting_id:
-            existing = await pool.fetchrow(
-                "SELECT id FROM discovery.interviews WHERE fireflies_meeting_id = $1",
-                fireflies_meeting_id,
-            )
-            if existing:
-                logger.info("Meeting %s already in discovery DB, skipping", fireflies_meeting_id)
-                return {"skipped": True, "interview_id": existing["id"]}
-
-        # Insert interview
-        interview_id = await pool.fetchval(
-            """
-            INSERT INTO discovery.interviews
-                (date, participant_name, participant_role, company_name,
-                 interviewee_type, product_categories, behavioral_segment,
-                 demographics, channel, fireflies_meeting_id,
-                 transcript_raw, summary, extracted_data)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-            RETURNING id
-            """,
-            interview_date,
-            participant_name,
-            extraction.get("participant_role"),
-            extraction.get("company_name"),
-            extraction["interviewee_type"],
-            extraction.get("product_categories", []),
-            extraction.get("behavioral_segment"),
-            extraction.get("demographics"),
-            channel,
+    # Check for duplicates
+    if fireflies_meeting_id:
+        existing = await pool.fetchrow(
+            "SELECT id FROM discovery.interviews WHERE fireflies_meeting_id = $1",
             fireflies_meeting_id,
-            transcript_text,
-            extraction.get("summary"),
-            json.dumps(extraction),
         )
-        logger.info("Discovery interview #%d created", interview_id)
+        if existing:
+            logger.info("Meeting %s already in discovery DB, skipping", fireflies_meeting_id)
+            return {"skipped": True, "interview_id": existing["id"]}
 
-        # Insert insights
-        insights_count = 0
-        for insight in extraction.get("insights", []):
-            await pool.execute(
-                """
-                INSERT INTO discovery.insights
-                    (interview_id, type, content, category, severity,
-                     sentiment, verbatim_quote, tags)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                """,
-                interview_id,
-                insight["type"],
-                insight["content"],
-                insight.get("category"),
-                insight.get("severity"),
-                insight.get("sentiment"),
-                insight.get("verbatim_quote"),
-                "[]",
-            )
-            insights_count += 1
-        logger.info("  %d insights inserted", insights_count)
+    # Insert interview
+    interview_id = await pool.fetchval(
+        """
+        INSERT INTO discovery.interviews
+            (date, participant_name, participant_role, company_name,
+             interviewee_type, product_categories, behavioral_segment,
+             demographics, channel, fireflies_meeting_id,
+             transcript_raw, summary, extracted_data)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        RETURNING id
+        """,
+        interview_date,
+        participant_name,
+        extraction.get("participant_role"),
+        extraction.get("company_name"),
+        extraction["interviewee_type"],
+        extraction.get("product_categories", []),
+        extraction.get("behavioral_segment"),
+        extraction.get("demographics"),
+        channel,
+        fireflies_meeting_id,
+        transcript_text,
+        extraction.get("summary"),
+        json.dumps(extraction),
+    )
+    logger.info("Discovery interview #%d created", interview_id)
 
-        # Insert clusters
-        clusters_count = 0
-        for cluster in extraction.get("clusters", []):
-            await pool.execute(
-                """
-                INSERT INTO discovery.clusters
-                    (user_type, need, insight, memorable_quote,
-                     category, source_interview_ids)
-                VALUES ($1,$2,$3,$4,$5,$6)
-                """,
-                cluster["user_type"],
-                cluster["need"],
-                cluster["insight"],
-                cluster.get("memorable_quote"),
-                cluster.get("category"),
-                json.dumps([interview_id]),
-            )
-            clusters_count += 1
-        logger.info("  %d clusters inserted", clusters_count)
+    # Insert insights
+    insights_count = 0
+    for insight in extraction.get("insights", []):
+        await pool.execute(
+            """
+            INSERT INTO discovery.insights
+                (interview_id, type, content, category, severity,
+                 sentiment, verbatim_quote, tags)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            """,
+            interview_id,
+            insight["type"],
+            insight["content"],
+            insight.get("category"),
+            insight.get("severity"),
+            insight.get("sentiment"),
+            insight.get("verbatim_quote"),
+            "[]",
+        )
+        insights_count += 1
+    logger.info("  %d insights inserted", insights_count)
 
-        # Dual-write to Teable (best-effort — don't fail the pipeline if Teable is down)
-        try:
-            teable = TeableClient()
-            teable.write_interview(
-                participant_name=participant_name,
-                date=str(interview_date),
-                participant_role=extraction.get("participant_role") or "",
-                company_name=extraction.get("company_name") or "",
-                interviewee_type=extraction["interviewee_type"],
-                product_categories=extraction.get("product_categories"),
-                behavioral_segment=extraction.get("behavioral_segment") or "",
-                demographics=extraction.get("demographics") or "",
-                summary=extraction.get("summary") or "",
-                fireflies_meeting_id=fireflies_meeting_id or "",
-            )
-            teable.write_insights([
-                {
-                    "interview": participant_name,
-                    "type": ins["type"],
-                    "category": ins.get("category") or "",
-                    "content": ins["content"],
-                    "severity": ins.get("severity") or "",
-                    "sentiment": ins.get("sentiment") or "",
-                    "quote": ins.get("verbatim_quote") or "",
-                }
-                for ins in extraction.get("insights", [])
-            ])
-            teable.write_clusters([
-                {
-                    "user_type": cl["user_type"],
-                    "need": cl["need"],
-                    "insight": cl["insight"],
-                    "quote": cl.get("memorable_quote") or "",
-                    "category": cl.get("category") or "",
-                }
-                for cl in extraction.get("clusters", [])
-            ])
-            logger.info("  Teable dual-write: 1 interview, %d insights, %d clusters", insights_count, clusters_count)
-        except Exception as e:
-            logger.warning("Teable dual-write failed (non-fatal): %s", e)
+    # Insert clusters
+    clusters_count = 0
+    for cluster in extraction.get("clusters", []):
+        await pool.execute(
+            """
+            INSERT INTO discovery.clusters
+                (user_type, need, insight, memorable_quote,
+                 category, source_interview_ids)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            """,
+            cluster["user_type"],
+            cluster["need"],
+            cluster["insight"],
+            cluster.get("memorable_quote"),
+            cluster.get("category"),
+            json.dumps([interview_id]),
+        )
+        clusters_count += 1
+    logger.info("  %d clusters inserted", clusters_count)
 
-        return {
-            "interview_id": interview_id,
-            "insights": insights_count,
-            "clusters": clusters_count,
-            "type": extraction["interviewee_type"],
-            "segment": extraction.get("behavioral_segment"),
-            "summary": extraction.get("summary"),
-        }
-    finally:
-        await pool.close()
+    # Dual-write to Teable (best-effort — don't fail the pipeline if Teable is down)
+    try:
+        teable = TeableClient()
+        teable.write_interview(
+            participant_name=participant_name,
+            date=str(interview_date),
+            participant_role=extraction.get("participant_role") or "",
+            company_name=extraction.get("company_name") or "",
+            interviewee_type=extraction["interviewee_type"],
+            product_categories=extraction.get("product_categories"),
+            behavioral_segment=extraction.get("behavioral_segment") or "",
+            demographics=extraction.get("demographics") or "",
+            summary=extraction.get("summary") or "",
+            fireflies_meeting_id=fireflies_meeting_id or "",
+        )
+        teable.write_insights([
+            {
+                "interview": participant_name,
+                "type": ins["type"],
+                "category": ins.get("category") or "",
+                "content": ins["content"],
+                "severity": ins.get("severity") or "",
+                "sentiment": ins.get("sentiment") or "",
+                "quote": ins.get("verbatim_quote") or "",
+            }
+            for ins in extraction.get("insights", [])
+        ])
+        teable.write_clusters([
+            {
+                "user_type": cl["user_type"],
+                "need": cl["need"],
+                "insight": cl["insight"],
+                "quote": cl.get("memorable_quote") or "",
+                "category": cl.get("category") or "",
+            }
+            for cl in extraction.get("clusters", [])
+        ])
+        logger.info("  Teable dual-write: 1 interview, %d insights, %d clusters", insights_count, clusters_count)
+    except Exception as e:
+        logger.warning("Teable dual-write failed (non-fatal): %s", e)
+
+    return {
+        "interview_id": interview_id,
+        "insights": insights_count,
+        "clusters": clusters_count,
+        "type": extraction["interviewee_type"],
+        "segment": extraction.get("behavioral_segment"),
+        "summary": extraction.get("summary"),
+    }
 
 
 async def process_discovery_meeting(
+    pool: asyncpg.Pool,
     transcript_text: str,
     participant_name: str,
     meeting_title: str | None = None,
@@ -327,6 +324,7 @@ async def process_discovery_meeting(
     )
 
     result = await store_extraction(
+        pool=pool,
         extraction=extraction,
         participant_name=participant_name,
         interview_date=date_type.fromisoformat(meeting_date) if meeting_date else date_type.today(),

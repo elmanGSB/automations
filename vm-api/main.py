@@ -223,6 +223,9 @@ async def _run_extraction(meeting_id: str) -> None:
     if not FIREFLIES_API_KEY:
         logger.error("FIREFLIES_API_KEY not set — cannot fetch transcript for %s", meeting_id)
         return
+    if pool is None:
+        logger.error("DB pool not initialised — cannot run extraction for %s", meeting_id)
+        return
     client = FirefliesClient(FIREFLIES_API_KEY)
     try:
         transcript = await client.fetch_transcript(meeting_id)
@@ -236,6 +239,7 @@ async def _run_extraction(meeting_id: str) -> None:
         meeting_date = transcript.date[:10] if transcript.date else None
 
         result = await process_discovery_meeting(
+            pool=pool,
             transcript_text=transcript_text,
             participant_name=participant_name,
             meeting_title=transcript.title,
