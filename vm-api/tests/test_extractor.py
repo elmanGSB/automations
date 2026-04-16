@@ -22,20 +22,111 @@ def test_database_url_has_default(monkeypatch):
     assert "5432" in discovery_extractor.DATABASE_URL
 
 
-def make_mock_pool():
+from discovery_extractor import store_extraction as store_extraction_fn
+
+
+# ---------------------------------------------------------------------------
+# Mock helpers
+# ---------------------------------------------------------------------------
+
+def make_mock_conn():
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=None)   # no duplicate by default
+    conn.fetchval = AsyncMock(return_value=42)     # INSERT RETURNING id
+    conn.execute = AsyncMock()
+    txn = MagicMock()
+    txn.__aenter__ = AsyncMock(return_value=None)
+    txn.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction.return_value = txn
+    return conn
+
+
+def make_mock_pool(conn=None):
+    if conn is None:
+        conn = make_mock_conn()
     pool = MagicMock(spec=asyncpg.Pool)
-    pool.fetchrow = AsyncMock(return_value=None)
-    pool.fetchval = AsyncMock(return_value=42)
-    pool.execute = AsyncMock()
-    return pool
+    acquire = MagicMock()
+    acquire.__aenter__ = AsyncMock(return_value=conn)
+    acquire.__aexit__ = AsyncMock(return_value=False)
+    pool.acquire.return_value = acquire
+    return pool, conn
+
+
+# ---------------------------------------------------------------------------
+# Transaction tests (new — should FAIL before the fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_store_extraction_uses_transaction():
+    """store_extraction must wrap all DB writes in a single transaction."""
+    pool, conn = make_mock_pool()
+    extraction = {
+        "interviewee_type": "distributor",
+        "insights": [],
+        "clusters": [],
+        "summary": "s",
+        "participant_role": None,
+        "company_name": None,
+        "product_categories": [],
+        "behavioral_segment": None,
+        "demographics": None,
+    }
+
+    with patch("discovery_extractor.TeableClient"):
+        await store_extraction_fn(
+            pool=pool,
+            extraction=extraction,
+            participant_name="John",
+            interview_date=date(2026, 4, 16),
+            transcript_text="text",
+        )
+
+    pool.acquire.assert_called_once()
+    conn.transaction.assert_called_once()
+    conn.transaction.return_value.__aenter__.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_store_extraction_uses_injected_pool():
-    """store_extraction must use the passed pool, not create its own."""
-    from discovery_extractor import store_extraction
+async def test_store_extraction_partial_failure_propagates():
+    """Exception during child insert must propagate so asyncpg can roll back."""
+    conn = make_mock_conn()
+    conn.execute = AsyncMock(side_effect=RuntimeError("constraint violation"))
+    pool, _ = make_mock_pool(conn)
 
-    mock_pool = make_mock_pool()
+    extraction = {
+        "interviewee_type": "distributor",
+        "insights": [{"type": "problem", "content": "bad insert"}],
+        "clusters": [],
+        "summary": "",
+        "participant_role": None,
+        "company_name": None,
+        "product_categories": [],
+        "behavioral_segment": None,
+        "demographics": None,
+    }
+
+    with patch("discovery_extractor.TeableClient"):
+        with pytest.raises(RuntimeError, match="constraint violation"):
+            await store_extraction_fn(
+                pool=pool,
+                extraction=extraction,
+                participant_name="Test",
+                interview_date=date(2026, 4, 16),
+                transcript_text="text",
+            )
+
+    # transaction.__aexit__ receives the exception → asyncpg rolls back on real DB
+    conn.transaction.return_value.__aexit__.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Pool-threading tests (updated from Task 4 — assert on conn, not pool)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_store_extraction_uses_injected_pool():
+    """store_extraction must use the passed pool (via acquire), not create its own."""
+    pool, conn = make_mock_pool()
     extraction = {
         "interviewee_type": "distributor",
         "insights": [],
@@ -49,23 +140,17 @@ async def test_store_extraction_uses_injected_pool():
     }
 
     with patch("discovery_extractor.asyncpg") as mock_asyncpg, \
-         patch("discovery_extractor.TeableClient") as mock_teable:
-        mock_teable.return_value.write_interview = MagicMock(return_value=1)
-        mock_teable.return_value.write_insights = MagicMock(return_value=0)
-        mock_teable.return_value.write_clusters = MagicMock(return_value=0)
-
-        result = await store_extraction(
-            pool=mock_pool,
+         patch("discovery_extractor.TeableClient"):
+        result = await store_extraction_fn(
+            pool=pool,
             extraction=extraction,
             participant_name="John",
             interview_date=date(2026, 4, 16),
             transcript_text="Hello world",
         )
 
-    # asyncpg.create_pool must NOT have been called
     mock_asyncpg.create_pool.assert_not_called()
-    # The injected pool must have been used for the INSERT ... RETURNING id
-    mock_pool.fetchval.assert_awaited_once()
+    conn.fetchval.assert_awaited_once()   # INSERT ... RETURNING id used the connection
     assert result["interview_id"] == 42
 
 
@@ -74,7 +159,7 @@ async def test_process_discovery_meeting_threads_pool():
     """process_discovery_meeting must accept and thread pool through."""
     from discovery_extractor import process_discovery_meeting
 
-    mock_pool = make_mock_pool()
+    pool, _ = make_mock_pool()
 
     fake_extraction = {
         "interviewee_type": "distributor",
@@ -92,13 +177,12 @@ async def test_process_discovery_meeting_threads_pool():
          patch("discovery_extractor.store_extraction", AsyncMock(return_value={"interview_id": 1})) as mock_store, \
          patch("discovery_extractor.TeableClient"):
         await process_discovery_meeting(
-            pool=mock_pool,
+            pool=pool,
             transcript_text="text",
             participant_name="Jane",
             meeting_date="2026-04-16",
         )
 
-    # store_extraction must have received the pool
     call = mock_store.call_args
     passed_pool = call.kwargs.get("pool") or (call.args[0] if call.args else None)
-    assert passed_pool is mock_pool
+    assert passed_pool is pool

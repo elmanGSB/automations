@@ -169,86 +169,84 @@ async def store_extraction(
     channel: str = "call",
 ) -> dict:
     """Insert extracted data into the discovery Postgres database."""
-    # Check for duplicates
-    if fireflies_meeting_id:
-        existing = await pool.fetchrow(
-            "SELECT id FROM discovery.interviews WHERE fireflies_meeting_id = $1",
-            fireflies_meeting_id,
-        )
-        if existing:
-            logger.info("Meeting %s already in discovery DB, skipping", fireflies_meeting_id)
-            return {"skipped": True, "interview_id": existing["id"]}
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if fireflies_meeting_id:
+                existing = await conn.fetchrow(
+                    "SELECT id FROM discovery.interviews WHERE fireflies_meeting_id = $1",
+                    fireflies_meeting_id,
+                )
+                if existing:
+                    logger.info("Meeting %s already in discovery DB, skipping", fireflies_meeting_id)
+                    return {"skipped": True, "interview_id": existing["id"]}
 
-    # Insert interview
-    interview_id = await pool.fetchval(
-        """
-        INSERT INTO discovery.interviews
-            (date, participant_name, participant_role, company_name,
-             interviewee_type, product_categories, behavioral_segment,
-             demographics, channel, fireflies_meeting_id,
-             transcript_raw, summary, extracted_data)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-        RETURNING id
-        """,
-        interview_date,
-        participant_name,
-        extraction.get("participant_role"),
-        extraction.get("company_name"),
-        extraction["interviewee_type"],
-        extraction.get("product_categories", []),
-        extraction.get("behavioral_segment"),
-        extraction.get("demographics"),
-        channel,
-        fireflies_meeting_id,
-        transcript_text,
-        extraction.get("summary"),
-        json.dumps(extraction),
-    )
-    logger.info("Discovery interview #%d created", interview_id)
+            interview_id = await conn.fetchval(
+                """
+                INSERT INTO discovery.interviews
+                    (date, participant_name, participant_role, company_name,
+                     interviewee_type, product_categories, behavioral_segment,
+                     demographics, channel, fireflies_meeting_id,
+                     transcript_raw, summary, extracted_data)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                RETURNING id
+                """,
+                interview_date,
+                participant_name,
+                extraction.get("participant_role"),
+                extraction.get("company_name"),
+                extraction["interviewee_type"],
+                extraction.get("product_categories", []),
+                extraction.get("behavioral_segment"),
+                extraction.get("demographics"),
+                channel,
+                fireflies_meeting_id,
+                transcript_text,
+                extraction.get("summary"),
+                json.dumps(extraction),
+            )
+            logger.info("Discovery interview #%d created", interview_id)
 
-    # Insert insights
-    insights_count = 0
-    for insight in extraction.get("insights", []):
-        await pool.execute(
-            """
-            INSERT INTO discovery.insights
-                (interview_id, type, content, category, severity,
-                 sentiment, verbatim_quote, tags)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-            """,
-            interview_id,
-            insight["type"],
-            insight["content"],
-            insight.get("category"),
-            insight.get("severity"),
-            insight.get("sentiment"),
-            insight.get("verbatim_quote"),
-            "[]",
-        )
-        insights_count += 1
-    logger.info("  %d insights inserted", insights_count)
+            insights_count = 0
+            for insight in extraction.get("insights", []):
+                await conn.execute(
+                    """
+                    INSERT INTO discovery.insights
+                        (interview_id, type, content, category, severity,
+                         sentiment, verbatim_quote, tags)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    """,
+                    interview_id,
+                    insight["type"],
+                    insight["content"],
+                    insight.get("category"),
+                    insight.get("severity"),
+                    insight.get("sentiment"),
+                    insight.get("verbatim_quote"),
+                    "[]",
+                )
+                insights_count += 1
+            logger.info("  %d insights inserted", insights_count)
 
-    # Insert clusters
-    clusters_count = 0
-    for cluster in extraction.get("clusters", []):
-        await pool.execute(
-            """
-            INSERT INTO discovery.clusters
-                (user_type, need, insight, memorable_quote,
-                 category, source_interview_ids)
-            VALUES ($1,$2,$3,$4,$5,$6)
-            """,
-            cluster["user_type"],
-            cluster["need"],
-            cluster["insight"],
-            cluster.get("memorable_quote"),
-            cluster.get("category"),
-            json.dumps([interview_id]),
-        )
-        clusters_count += 1
-    logger.info("  %d clusters inserted", clusters_count)
+            clusters_count = 0
+            for cluster in extraction.get("clusters", []):
+                await conn.execute(
+                    """
+                    INSERT INTO discovery.clusters
+                        (user_type, need, insight, memorable_quote,
+                         category, source_interview_ids)
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                    """,
+                    cluster["user_type"],
+                    cluster["need"],
+                    cluster["insight"],
+                    cluster.get("memorable_quote"),
+                    cluster.get("category"),
+                    json.dumps([interview_id]),
+                )
+                clusters_count += 1
+            logger.info("  %d clusters inserted", clusters_count)
 
-    # Dual-write to Teable (best-effort — don't fail the pipeline if Teable is down)
+    # Teable dual-write happens after the transaction commits (Task 2 adds async wrapping)
     try:
         teable = TeableClient()
         teable.write_interview(
