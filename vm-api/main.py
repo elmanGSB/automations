@@ -83,7 +83,9 @@ def _verify_fireflies_signature(payload: bytes, signature_header: str) -> bool:
 
 async def require_auth(authorization: str = Header(default="")):
     """Bearer token guard for internal endpoints called by Windmill."""
-    if VM_API_SECRET and authorization != f"Bearer {VM_API_SECRET}":
+    if not VM_API_SECRET:
+        raise HTTPException(status_code=500, detail="VM_API_SECRET not configured")
+    if authorization != f"Bearer {VM_API_SECRET}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -166,7 +168,7 @@ async def update_lead_pillar(lead_id: int, body: LeadPatch):
 # Interviews (read-only)
 # ---------------------------------------------------------------------------
 
-@app.get("/api/interviews")
+@app.get("/api/interviews", dependencies=[Depends(require_auth)])
 async def list_interviews(limit: int = 20):
     rows = await pool.fetch(
         """
