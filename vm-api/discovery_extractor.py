@@ -6,6 +6,7 @@ parses JSON response, inserts into the discovery Postgres database.
 No BAML dependency — prompt is embedded directly.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -246,44 +247,50 @@ async def store_extraction(
                 clusters_count += 1
             logger.info("  %d clusters inserted", clusters_count)
 
-    # Teable dual-write happens after the transaction commits (Task 2 adds async wrapping)
+    # Dual-write to Teable (best-effort, non-blocking — runs in thread with 10s timeout)
     try:
         teable = TeableClient()
-        teable.write_interview(
-            participant_name=participant_name,
-            date=str(interview_date),
-            participant_role=extraction.get("participant_role") or "",
-            company_name=extraction.get("company_name") or "",
-            interviewee_type=extraction["interviewee_type"],
-            product_categories=extraction.get("product_categories"),
-            behavioral_segment=extraction.get("behavioral_segment") or "",
-            demographics=extraction.get("demographics") or "",
-            summary=extraction.get("summary") or "",
-            fireflies_meeting_id=fireflies_meeting_id or "",
-        )
-        teable.write_insights([
-            {
-                "interview": participant_name,
-                "type": ins["type"],
-                "category": ins.get("category") or "",
-                "content": ins["content"],
-                "severity": ins.get("severity") or "",
-                "sentiment": ins.get("sentiment") or "",
-                "quote": ins.get("verbatim_quote") or "",
-            }
-            for ins in extraction.get("insights", [])
-        ])
-        teable.write_clusters([
-            {
-                "user_type": cl["user_type"],
-                "need": cl["need"],
-                "insight": cl["insight"],
-                "quote": cl.get("memorable_quote") or "",
-                "category": cl.get("category") or "",
-            }
-            for cl in extraction.get("clusters", [])
-        ])
+
+        def _sync_write():
+            teable.write_interview(
+                participant_name=participant_name,
+                date=str(interview_date),
+                participant_role=extraction.get("participant_role") or "",
+                company_name=extraction.get("company_name") or "",
+                interviewee_type=extraction["interviewee_type"],
+                product_categories=extraction.get("product_categories"),
+                behavioral_segment=extraction.get("behavioral_segment") or "",
+                demographics=extraction.get("demographics") or "",
+                summary=extraction.get("summary") or "",
+                fireflies_meeting_id=fireflies_meeting_id or "",
+            )
+            teable.write_insights([
+                {
+                    "interview": participant_name,
+                    "type": ins["type"],
+                    "category": ins.get("category") or "",
+                    "content": ins["content"],
+                    "severity": ins.get("severity") or "",
+                    "sentiment": ins.get("sentiment") or "",
+                    "quote": ins.get("verbatim_quote") or "",
+                }
+                for ins in extraction.get("insights", [])
+            ])
+            teable.write_clusters([
+                {
+                    "user_type": cl["user_type"],
+                    "need": cl["need"],
+                    "insight": cl["insight"],
+                    "quote": cl.get("memorable_quote") or "",
+                    "category": cl.get("category") or "",
+                }
+                for cl in extraction.get("clusters", [])
+            ])
+
+        await asyncio.wait_for(asyncio.to_thread(_sync_write), timeout=10.0)
         logger.info("  Teable dual-write: 1 interview, %d insights, %d clusters", insights_count, clusters_count)
+    except asyncio.TimeoutError:
+        logger.warning("Teable dual-write timed out after 10s (non-fatal)")
     except Exception as e:
         logger.warning("Teable dual-write failed (non-fatal): %s", e)
 

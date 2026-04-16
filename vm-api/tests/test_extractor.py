@@ -186,3 +186,34 @@ async def test_process_discovery_meeting_threads_pool():
     call = mock_store.call_args
     passed_pool = call.kwargs.get("pool") or (call.args[0] if call.args else None)
     assert passed_pool is pool
+
+
+@pytest.mark.asyncio
+async def test_teable_timeout_is_non_fatal():
+    """Teable timeout must not raise — logged as warning, pipeline succeeds."""
+    import asyncio as _asyncio
+    pool, _ = make_mock_pool()
+    extraction = {
+        "interviewee_type": "distributor",
+        "insights": [],
+        "clusters": [],
+        "summary": "",
+        "participant_role": None,
+        "company_name": None,
+        "product_categories": [],
+        "behavioral_segment": None,
+        "demographics": None,
+    }
+
+    with patch("discovery_extractor.asyncio.wait_for", side_effect=_asyncio.TimeoutError), \
+         patch("discovery_extractor.TeableClient"):
+        result = await store_extraction_fn(
+            pool=pool,
+            extraction=extraction,
+            participant_name="Test",
+            interview_date=date(2026, 4, 16),
+            transcript_text="text",
+        )
+
+    # Pipeline must succeed despite Teable timeout
+    assert result["interview_id"] == 42
