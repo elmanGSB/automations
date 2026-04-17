@@ -1,0 +1,5 @@
+summary: "Weekly digest — every Monday 9am UTC"
+timezone: UTC
+cron: "0 9 * * 1"
+args: {}
+enabled: true

@@ -1,0 +1,29 @@
+summary: Weekly Digest — Aggregate Interview Patterns
+description: Calls VM digest endpoint to analyze patterns across all customer-discovery notebooks and email a report.
+value:
+  modules:
+    - id: a
+      summary: Run patterns analysis and send email
+      value:
+        type: rawscript
+        content: '!inline run_digest.inline_script.py'
+        input_transforms: {}
+        language: python3
+        timeout: 960
+  failure_module:
+    id: failure
+    summary: Alert on digest failure
+    value:
+      type: rawscript
+      content: '!inline notify_digest_failure.inline_script.py'
+      language: python3
+      input_transforms:
+        error:
+          type: javascript
+          expr: error
+        flow_input:
+          type: javascript
+          expr: flow_input
+schema:
+  type: object
+  properties: {}
