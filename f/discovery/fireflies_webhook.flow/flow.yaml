@@ -1,0 +1,46 @@
+summary: Fireflies Webhook → VM API
+description: Receives Fireflies meeting.transcribed event and runs full discovery pipeline on VM
+value:
+  modules:
+    - id: a
+      summary: Validate event
+      value:
+        type: rawscript
+        content: '!inline validate_event.inline_script.py'
+        input_transforms:
+          eventType:
+            type: javascript
+            expr: flow_input.eventType ?? flow_input.event ?? ""
+          meetingId:
+            type: javascript
+            expr: flow_input.meetingId ?? flow_input.meeting_id ?? ""
+        lock: '!inline validate_event.inline_script.lock'
+        language: python3
+    - id: b
+      summary: Run full pipeline on VM
+      value:
+        type: rawscript
+        content: '!inline forward_to_vm_api.inline_script.py'
+        input_transforms:
+          event:
+            type: javascript
+            expr: results.a.event
+          meeting_id:
+            type: javascript
+            expr: results.a.meeting_id
+          reason:
+            type: javascript
+            expr: results.a.reason
+          skip:
+            type: javascript
+            expr: results.a.skip
+        lock: '!inline forward_to_vm_api.inline_script.lock'
+        language: python3
+        timeout: 960
+schema:
+  type: object
+  properties:
+    eventType:
+      type: string
+    meetingId:
+      type: string
