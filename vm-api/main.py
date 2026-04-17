@@ -4,6 +4,7 @@ VM API — central HTTP interface for Paperclip VM services.
 Runs on port 3101. Consolidates:
   - /api/leads          — demo form submissions from broccolli.ai
   - /webhook/fireflies  — Fireflies meeting extraction trigger (called by Windmill)
+  - /api/pipeline/run   — full discovery pipeline (Windmill calls this)
   - /health, /health/full — liveness + dependency checks
   - /api/interviews     — read recent interviews
 
@@ -28,6 +29,7 @@ from pydantic import BaseModel, EmailStr
 
 from discovery_extractor import process_discovery_meeting
 from fireflies import FirefliesClient
+from pipeline_runner import run_meeting_pipeline
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -120,6 +122,24 @@ async def health_full():
 
 
 # ---------------------------------------------------------------------------
+# Pipeline endpoint (replaces black-box interview-router)
+# ---------------------------------------------------------------------------
+
+class PipelineRunRequest(BaseModel):
+    meeting_id: str
+
+
+@app.post("/api/pipeline/run", dependencies=[Depends(require_auth)])
+def run_pipeline_endpoint(req: PipelineRunRequest):
+    """Synchronous pipeline — runs in FastAPI threadpool (plain def).
+    Returns structured per-step results displayed as Windmill job output.
+    """
+    if pool is None:
+        raise HTTPException(status_code=503, detail="DB pool not initialized")
+    return run_meeting_pipeline(req.meeting_id, pool)
+
+
+# ---------------------------------------------------------------------------
 # Leads (migrated from leads_service.py)
 # ---------------------------------------------------------------------------
 
@@ -184,7 +204,7 @@ async def list_interviews(limit: int = 20):
 
 
 # ---------------------------------------------------------------------------
-# Fireflies webhook
+# Fireflies webhook (legacy — kept for backwards compat during transition)
 # ---------------------------------------------------------------------------
 
 @app.post("/webhook/fireflies", status_code=202, dependencies=[Depends(require_auth)])

@@ -1,3 +1,5 @@
+import pytest
+from httpx import ASGITransport, AsyncClient
 from unittest.mock import MagicMock, patch
 
 
@@ -28,7 +30,7 @@ def make_mock_classification(category="customer-discovery"):
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# pipeline_runner tests
 # ---------------------------------------------------------------------------
 
 def test_pipeline_skips_already_processed():
@@ -80,3 +82,38 @@ def test_pipeline_returns_structured_steps():
     assert result["steps"]["nlm_analysis"]["status"] == "ok"
     assert result["steps"]["email"]["status"] == "ok"
     assert result["steps"]["mark_processed"]["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Endpoint tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pipeline_run_requires_auth():
+    """POST /api/pipeline/run must reject unauthenticated requests."""
+    import main as m
+    m.VM_API_SECRET = "test-secret"
+    async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
+        r = await ac.post("/api/pipeline/run", json={"meeting_id": "abc"})
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_returns_result():
+    """POST /api/pipeline/run must call run_meeting_pipeline and return its result."""
+    import main as m
+    m.VM_API_SECRET = "secret"
+
+    fake = {"status": "completed", "meeting_id": "abc123", "steps": {}}
+
+    with patch("main.run_meeting_pipeline", return_value=fake), \
+         patch("main.pool", MagicMock()):
+        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
+            r = await ac.post(
+                "/api/pipeline/run",
+                json={"meeting_id": "abc123"},
+                headers={"Authorization": "Bearer secret"},
+            )
+    assert r.status_code == 200
+    assert r.json()["status"] == "completed"
+    assert r.json()["meeting_id"] == "abc123"
