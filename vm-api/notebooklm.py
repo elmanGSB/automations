@@ -5,11 +5,15 @@ from config import KNOWN_CATEGORIES
 
 def create_notebook(title: str) -> str:
     """Create a NotebookLM notebook. Returns the notebook ID."""
-    result = subprocess.run(
-        ["nlm", "notebook", "create", title],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["nlm", "notebook", "create", title],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Timed out creating notebook '{title}' after 120s")
     if result.returncode != 0:
         raise RuntimeError(f"Failed to create notebook '{title}': {result.stderr.strip()}")
     # Output format: "✓ Created notebook: Title\n  ID: <uuid>"
@@ -21,16 +25,20 @@ def create_notebook(title: str) -> str:
 
 def add_pdf_source(notebook_id: str, pdf_path: str, title: str) -> None:
     """Upload a PDF file as a source to a NotebookLM notebook."""
-    result = subprocess.run(
-        [
-            "nlm", "source", "add", notebook_id,
-            "--file", pdf_path,
-            "--title", title,
-            "--wait",
-        ],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "nlm", "source", "add", notebook_id,
+                "--file", pdf_path,
+                "--title", title,
+                "--wait",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Timed out uploading PDF to notebook '{notebook_id}' after 600s")
     if result.returncode != 0:
         raise RuntimeError(
             f"Failed to add source to notebook '{notebook_id}': {result.stderr.strip()}"
