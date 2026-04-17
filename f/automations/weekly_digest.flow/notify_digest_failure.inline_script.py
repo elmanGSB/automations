@@ -1,3 +1,4 @@
+import html
 import httpx
 import wmill
 
@@ -8,7 +9,7 @@ def main(error: dict, flow_input: dict) -> dict:
     if not bot_token or not chat_id:
         return {"alerted": False, "reason": "telegram_not_configured"}
 
-    error_msg = str(error.get("error", error))[:500]
+    error_msg = html.escape(str(error.get("error", error))[:500])
     message = f"<b>Weekly digest failed</b>\n\n<code>{error_msg}</code>"
 
     with httpx.Client(timeout=10.0) as client:
