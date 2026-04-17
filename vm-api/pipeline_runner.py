@@ -28,8 +28,9 @@ from notifier import notify_new_category
 from pdf_generator import generate_transcript_pdf
 from speaker_roles import classify_speakers
 from state import (
-    check_and_mark_meeting,
     get_notebook_id,
+    is_meeting_processed,
+    mark_meeting_processed,
     save_notebook_id,
 )
 from transcript_formatter import format_external_with_context, format_with_roles
@@ -40,12 +41,24 @@ logger = logging.getLogger(__name__)
 _in_flight: set[str] = set()
 
 
-def run_meeting_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
+def _run_on_loop(coro, loop: asyncio.AbstractEventLoop):
+    """Submit a coroutine to a running event loop from this threadpool thread.
+
+    Required for pool-bound coroutines (asyncpg) that must run on the loop
+    that owns the connection pool. Non-pool coroutines can use asyncio.run().
+    """
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+
+def run_meeting_pipeline(
+    meeting_id: str, pool: asyncpg.Pool, loop: asyncio.AbstractEventLoop
+) -> dict:
     """
     Run full pipeline for a meeting. Returns structured dict with status per step.
     Windmill displays this dict as the job result.
 
     Plain def — runs in FastAPI threadpool. All blocking I/O (subprocess, HTTP) is safe here.
+    loop: the FastAPI event loop that owns the asyncpg pool.
     """
     # Fast in-flight check (in-memory, no file I/O)
     if meeting_id in _in_flight:
@@ -54,14 +67,17 @@ def run_meeting_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
     _in_flight.add(meeting_id)
 
     try:
-        return _run_pipeline(meeting_id, pool)
+        return _run_pipeline(meeting_id, pool, loop)
     finally:
         _in_flight.discard(meeting_id)
 
 
-def _run_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
-    # Atomic check-and-mark: True = already processed → skip
-    if check_and_mark_meeting(meeting_id):
+def _run_pipeline(
+    meeting_id: str, pool: asyncpg.Pool, loop: asyncio.AbstractEventLoop
+) -> dict:
+    # Read-only idempotency check — does not claim the meeting yet.
+    # Marking happens after the NLM upload succeeds so transient failures are retryable.
+    if is_meeting_processed(meeting_id):
         logger.info("Meeting %s already processed, skipping", meeting_id)
         return {"status": "skipped", "reason": "already_processed", "meeting_id": meeting_id}
 
@@ -70,7 +86,7 @@ def _run_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
     # Step 1: Fetch transcript
     client = FirefliesClient(api_key=FIREFLIES_API_KEY)
     try:
-        transcript = client.fetch_transcript(meeting_id)
+        transcript = asyncio.run(client.fetch_transcript(meeting_id))
         result["title"] = transcript.title
         result["steps"]["fetch"] = {"status": "ok", "title": transcript.title}
         logger.info("Fetched: '%s'", transcript.title)
@@ -79,7 +95,7 @@ def _run_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
         result["steps"]["fetch"] = {"status": "error", "error": "fetch_failed"}
         return result
     finally:
-        client.aclose()
+        asyncio.run(client.aclose())
 
     # Step 2: Classify speakers
     role_map = classify_speakers(transcript.sentences, INTERNAL_TEAM_NAMES)
@@ -130,14 +146,17 @@ def _run_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
         else:
             try:
                 participant_name = external_speakers[0]
-                discovery = asyncio.run(process_discovery_meeting(
-                    pool=pool,
-                    transcript_text=external_transcript,
-                    participant_name=participant_name,
-                    meeting_title=transcript.title,
-                    meeting_date=str(date_type.today()),
-                    fireflies_meeting_id=meeting_id,
-                ))
+                discovery = _run_on_loop(
+                    process_discovery_meeting(
+                        pool=pool,
+                        transcript_text=external_transcript,
+                        participant_name=participant_name,
+                        meeting_title=transcript.title,
+                        meeting_date=str(date_type.today()),
+                        fireflies_meeting_id=meeting_id,
+                    ),
+                    loop,
+                )
                 result["steps"]["discovery_extraction"] = {"status": "ok", **discovery}
             except Exception:
                 logger.exception("Discovery extraction failed for meeting %s (non-fatal)", meeting_id)
@@ -190,7 +209,11 @@ def _run_pipeline(meeting_id: str, pool: asyncpg.Pool) -> dict:
         result["steps"]["nlm_analysis"] = {"status": "error", "error": "analysis_failed"}
         return result
 
-    # Step 8: Mark as processed BEFORE email — prevents duplicate NLM uploads if email fails
+    # Step 8: Mark as processed — after NLM upload succeeds, before email.
+    # Transient pre-upload failures stay retryable; post-upload steps (email,
+    # Hindsight) are non-fatal and can be re-sent manually if needed.
+    # This position prevents duplicate NLM PDF uploads on Windmill retry.
+    mark_meeting_processed(meeting_id)
     result["steps"]["mark_processed"] = {"status": "ok"}
     logger.info("Meeting %s marked as processed", meeting_id)
 

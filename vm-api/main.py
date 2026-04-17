@@ -15,6 +15,7 @@ Deploy:
     -- 'sudo systemctl restart vm-api'
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -43,11 +44,13 @@ FIREFLIES_WEBHOOK_SECRET = os.environ.get("FIREFLIES_WEBHOOK_SECRET", "")
 VM_API_SECRET = os.environ.get("VM_API_SECRET", "")
 
 pool: asyncpg.Pool | None = None
+app_event_loop: asyncio.AbstractEventLoop | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global pool
+    global pool, app_event_loop
+    app_event_loop = asyncio.get_running_loop()
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
     yield
     await pool.close()
@@ -134,9 +137,9 @@ def run_pipeline_endpoint(req: PipelineRunRequest):
     """Synchronous pipeline — runs in FastAPI threadpool (plain def).
     Returns structured per-step results displayed as Windmill job output.
     """
-    if pool is None:
-        raise HTTPException(status_code=503, detail="DB pool not initialized")
-    return run_meeting_pipeline(req.meeting_id, pool)
+    if pool is None or app_event_loop is None:
+        raise HTTPException(status_code=503, detail="App not initialized")
+    return run_meeting_pipeline(req.meeting_id, pool, app_event_loop)
 
 
 # ---------------------------------------------------------------------------
