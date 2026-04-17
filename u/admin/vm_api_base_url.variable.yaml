@@ -1,0 +1,3 @@
+description: Base URL for the VM API service
+value: http://34.61.120.233:3101
+is_secret: false
