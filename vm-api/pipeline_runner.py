@@ -28,12 +28,30 @@ from notifier import notify_new_category
 from pdf_generator import generate_transcript_pdf
 from speaker_roles import classify_speakers
 from state import (
-    get_notebook_id,
+    get_or_create_notebook_id,
     is_meeting_processed,
+    is_nlm_uploaded,
     mark_meeting_processed,
-    save_notebook_id,
+    mark_nlm_uploaded,
 )
 from transcript_formatter import format_external_with_context, format_with_roles
+
+
+def _meeting_date(raw) -> str:
+    """Return YYYY-MM-DD from a Fireflies date field (ms timestamp or ISO string).
+    Falls back to today when Fireflies provides no date.
+    """
+    if not raw:
+        return str(date_type.today())
+    try:
+        if isinstance(raw, (int, float)):
+            from datetime import timezone
+            return date_type.fromtimestamp(raw / 1000, tz=timezone.utc).isoformat()
+        return str(raw)[:10]
+    except Exception:
+        logger.warning("Could not parse meeting date %r, falling back to today", raw)
+        return str(date_type.today())
+
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +170,7 @@ def _run_pipeline(
                         transcript_text=external_transcript,
                         participant_name=participant_name,
                         meeting_title=transcript.title,
-                        meeting_date=str(date_type.today()),
+                        meeting_date=_meeting_date(transcript.date),
                         fireflies_meeting_id=meeting_id,
                     ),
                     loop,
@@ -167,7 +185,7 @@ def _run_pipeline(
             "reason": f"category={classification.category}",
         }
 
-    # Steps 5-9: NLM upload, analysis, and email — only for categories where
+    # Steps 5-11: NLM upload, analysis, and email — only for categories where
     # novel insight extraction makes sense (has external interviewees).
     # Classes, team-syncs, etc. skip this entire block.
     nlm_enabled = classification.category in NLM_ENABLED_CATEGORIES
@@ -175,19 +193,16 @@ def _run_pipeline(
 
     if not nlm_enabled:
         skipped = {"status": "skipped", "reason": f"category={classification.category}"}
-        result["steps"]["notebooklm_notebook"] = skipped
-        result["steps"]["notebooklm_upload"] = skipped
-        result["steps"]["nlm_analysis"] = skipped
-        result["steps"]["email"] = skipped
+        for key in ("notebooklm_notebook", "notebooklm_upload", "nlm_analysis", "email"):
+            result["steps"][key] = skipped
     else:
         # Step 5: Get or create NotebookLM notebook
         try:
-            notebook_id = get_notebook_id(classification.category)
-            is_new_notebook = notebook_id is None
-            if is_new_notebook:
-                nb_title = notebook_title_for_category(classification.category)
-                notebook_id = create_notebook(nb_title)
-                save_notebook_id(classification.category, notebook_id)
+            nb_title = notebook_title_for_category(classification.category)
+            notebook_id, is_new_notebook = get_or_create_notebook_id(
+                classification.category,
+                lambda: create_notebook(nb_title),
+            )
             result["steps"]["notebooklm_notebook"] = {
                 "status": "ok",
                 "notebook_id": notebook_id,
@@ -198,12 +213,20 @@ def _run_pipeline(
             result["steps"]["notebooklm_notebook"] = {"status": "error", "error": "notebook_failed"}
             return result
 
-        # Step 6: Generate PDF and upload to notebook
+        # Step 6: Generate PDF and upload to notebook (idempotent via _nlm_uploaded state)
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                pdf_path = generate_transcript_pdf(transcript, tmpdir, role_map=role_map)
-                add_pdf_source(notebook_id, pdf_path, transcript.title)
-            result["steps"]["notebooklm_upload"] = {"status": "ok"}
+            if is_nlm_uploaded(meeting_id):
+                logger.info("Meeting %s PDF already uploaded, skipping", meeting_id)
+                result["steps"]["notebooklm_upload"] = {
+                    "status": "skipped",
+                    "reason": "already_uploaded",
+                }
+            else:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    pdf_path = generate_transcript_pdf(transcript, tmpdir, role_map=role_map)
+                    add_pdf_source(notebook_id, pdf_path, transcript.title)
+                mark_nlm_uploaded(meeting_id)
+                result["steps"]["notebooklm_upload"] = {"status": "ok"}
         except Exception:
             logger.exception("NLM upload failed for meeting %s", meeting_id)
             result["steps"]["notebooklm_upload"] = {"status": "error", "error": "upload_failed"}
@@ -222,7 +245,7 @@ def _run_pipeline(
             result["steps"]["nlm_analysis"] = {"status": "error", "error": "analysis_failed"}
             return result
 
-        # Step 9: Email report (non-fatal; guard against empty novel)
+        # Step 8: Email report (non-fatal; guard against empty novel)
         if analysis.novel.strip():
             try:
                 asyncio.run(send_novel_report(transcript.title, classification.category, analysis.novel))
@@ -234,7 +257,7 @@ def _run_pipeline(
             logger.warning("Meeting %s: NLM returned empty novel insights — skipping email", meeting_id)
             result["steps"]["email"] = {"status": "skipped", "reason": "empty_novel"}
 
-    # Step 8: Mark as processed — after NLM work (or skip), before Hindsight.
+    # Step 9: Mark as processed — after NLM work (or skip), before Hindsight.
     mark_meeting_processed(meeting_id)
     result["steps"]["mark_processed"] = {"status": "ok"}
     logger.info("Meeting %s marked as processed", meeting_id)

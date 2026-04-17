@@ -83,9 +83,11 @@ def test_pipeline_returns_structured_steps():
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value="external transcript"), \
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, return_value={"interview_id": 1}), \
-         patch("pipeline_runner.get_notebook_id", return_value="nb-123"), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
          patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
          patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="Novel stuff here")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -145,9 +147,11 @@ def test_pipeline_skips_extraction_when_all_speakers_internal():
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value=""), \
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock) as mock_extract, \
-         patch("pipeline_runner.get_notebook_id", return_value="nb-123"), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
          patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
          patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="some novel")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -176,9 +180,11 @@ def test_pipeline_skips_email_when_novel_is_empty():
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value="external transcript"), \
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, return_value={"interview_id": 1}), \
-         patch("pipeline_runner.get_notebook_id", return_value="nb-123"), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
          patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
          patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -208,7 +214,7 @@ def test_pipeline_skips_extraction_for_non_discovery_category():
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value="external transcript"), \
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock) as mock_extract, \
-         patch("pipeline_runner.get_notebook_id", return_value="nb-123"), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
          patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
          patch("pipeline_runner.add_pdf_source"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="novel")), \
@@ -239,7 +245,7 @@ def test_pipeline_skips_nlm_and_email_for_class_meetings():
          patch("pipeline_runner.classify_speakers", return_value={"Elman": "internal"}), \
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value=""), \
-         patch("pipeline_runner.get_notebook_id") as mock_nb, \
+         patch("pipeline_runner.get_or_create_notebook_id") as mock_nb, \
          patch("pipeline_runner.add_pdf_source") as mock_upload, \
          patch("pipeline_runner.analyze_novel") as mock_analyze, \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
@@ -311,3 +317,74 @@ async def test_pipeline_run_returns_result():
     assert r.status_code == 200
     assert r.json()["status"] == "completed"
     assert r.json()["meeting_id"] == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# Guard: NLM upload skipped when already uploaded
+# ---------------------------------------------------------------------------
+
+def test_pipeline_skips_nlm_upload_when_already_uploaded():
+    """If is_nlm_uploaded returns True, add_pdf_source must not be called."""
+    mock_transcript, mock_cls, make_ff = _full_happy_path_patches()
+
+    with patch("pipeline_runner.is_meeting_processed", return_value=False), \
+         patch("pipeline_runner.mark_meeting_processed"), \
+         patch("pipeline_runner._run_on_loop", side_effect=_test_async_runner), \
+         patch("pipeline_runner.FirefliesClient", return_value=make_ff()), \
+         patch("pipeline_runner.classify_meeting", new_callable=AsyncMock, return_value=mock_cls), \
+         patch("pipeline_runner.classify_speakers", return_value={"Jane": "external", "Elman": "internal"}), \
+         patch("pipeline_runner.format_with_roles", return_value="labeled"), \
+         patch("pipeline_runner.format_external_with_context", return_value="external transcript"), \
+         patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, return_value={"interview_id": 1}), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=True), \
+         patch("pipeline_runner.add_pdf_source") as mock_upload, \
+         patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="Novel stuff here")), \
+         patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
+         patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
+         patch("pipeline_runner.retain_novel_insights", new_callable=AsyncMock):
+        result = _pr.run_meeting_pipeline("already-uploaded", MagicMock(), _mock_loop())
+
+    assert result["steps"]["notebooklm_upload"]["status"] == "skipped"
+    assert result["steps"]["notebooklm_upload"]["reason"] == "already_uploaded"
+    mock_upload.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Guard: meeting date passed correctly to discovery extraction
+# ---------------------------------------------------------------------------
+
+def test_pipeline_passes_transcript_date_not_today():
+    """process_discovery_meeting must receive transcript.date[:10], not today's date."""
+    mock_transcript, mock_cls, make_ff = _full_happy_path_patches()
+    mock_transcript.date = "2026-03-15T10:00:00.000Z"
+
+    captured = {}
+
+    async def capture(**kwargs):
+        captured["meeting_date"] = kwargs.get("meeting_date")
+        return {"interview_id": 1}
+
+    with patch("pipeline_runner.is_meeting_processed", return_value=False), \
+         patch("pipeline_runner.mark_meeting_processed"), \
+         patch("pipeline_runner._run_on_loop", side_effect=_test_async_runner), \
+         patch("pipeline_runner.FirefliesClient", return_value=make_ff()), \
+         patch("pipeline_runner.classify_meeting", new_callable=AsyncMock, return_value=mock_cls), \
+         patch("pipeline_runner.classify_speakers", return_value={"Jane": "external", "Elman": "internal"}), \
+         patch("pipeline_runner.format_with_roles", return_value="labeled"), \
+         patch("pipeline_runner.format_external_with_context", return_value="external transcript"), \
+         patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, side_effect=capture), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
+         patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
+         patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
+         patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="Novel")), \
+         patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
+         patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
+         patch("pipeline_runner.retain_novel_insights", new_callable=AsyncMock):
+        _pr.run_meeting_pipeline("date-test", MagicMock(), _mock_loop())
+
+    assert captured["meeting_date"] == "2026-03-15", (
+        f"Expected '2026-03-15', got {captured.get('meeting_date')!r}"
+    )

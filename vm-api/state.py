@@ -120,21 +120,3 @@ def mark_nlm_uploaded(meeting_id: str) -> None:
             uploaded.append(meeting_id)
         data["_nlm_uploaded"] = uploaded[-500:]
         _save(data)
-
-
-def check_and_mark_meeting(meeting_id: str) -> bool:
-    """Atomically check if meeting is already processed and mark it if not.
-
-    Returns True if meeting was already processed (caller should skip).
-    Returns False if newly claimed (caller should proceed).
-    Uses FileLock so concurrent requests cannot both pass the check.
-    """
-    with FileLock(_lock_path(), timeout=_LOCK_TIMEOUT):
-        data = _load()
-        processed = data.setdefault("_processed", [])
-        if meeting_id in processed:
-            return True
-        processed.append(meeting_id)
-        data["_processed"] = processed[-500:]  # cap to last 500
-        _save(data)
-    return False
