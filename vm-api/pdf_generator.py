@@ -1,0 +1,117 @@
+import html
+import os
+import re
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.lib import colors
+from fireflies import Transcript
+
+
+def _esc(text: str) -> str:
+    """Escape HTML special characters for reportlab Paragraph."""
+    return html.escape(text or "")
+
+
+def _safe_filename(title: str) -> str:
+    slug = re.sub(r"[^\w\s-]", "", title.lower())
+    slug = re.sub(r"\s+", "-", slug).strip("-")
+    return slug[:60]
+
+
+def generate_transcript_pdf(transcript: Transcript, output_dir: str, role_map: dict[str, str] | None = None) -> str:
+    """Generate a PDF from a transcript. Returns the path to the created file."""
+    filename = f"{_safe_filename(transcript.title)}-{transcript.id[:8]}.pdf"
+    output_path = os.path.join(output_dir, filename)
+
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=A4,
+        rightMargin=2 * cm,
+        leftMargin=2 * cm,
+        topMargin=2 * cm,
+        bottomMargin=2 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("MeetingTitle", parent=styles["Title"], fontSize=18, spaceAfter=6)
+    meta_style = ParagraphStyle("Meta", parent=styles["Normal"], fontSize=10, textColor=colors.grey)
+    section_style = ParagraphStyle("Section", parent=styles["Heading2"], fontSize=12, spaceBefore=12)
+    speaker_style = ParagraphStyle(
+        "Speaker",
+        parent=styles["Normal"],
+        fontSize=10,
+        textColor=colors.HexColor("#1a56db"),
+        fontName="Helvetica-Bold",
+    )
+    internal_speaker_style = ParagraphStyle(
+        "InternalSpeaker",
+        parent=styles["Normal"],
+        fontSize=10,
+        textColor=colors.HexColor("#6b7280"),
+        fontName="Helvetica-Bold",
+    )
+    text_style = ParagraphStyle("Body", parent=styles["Normal"], fontSize=10, leading=14)
+    bullet_style = ParagraphStyle("Bullet", parent=styles["Normal"], fontSize=10, leftIndent=12)
+
+    if not transcript.date:
+        date_str = "Unknown date"
+    elif isinstance(transcript.date, int):
+        from datetime import datetime, timezone
+        date_str = datetime.fromtimestamp(transcript.date / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    else:
+        date_str = str(transcript.date)[:10]
+    duration_min = transcript.duration // 60 if transcript.duration else 0
+
+    story = [
+        Paragraph(_esc(transcript.title or "Untitled Meeting"), title_style),
+        Paragraph(f"Date: {_esc(date_str)} &nbsp;&nbsp; Duration: {_esc(str(duration_min))} min", meta_style),
+        Spacer(1, 0.4 * cm),
+        HRFlowable(width="100%", thickness=1, color=colors.lightgrey),
+        Spacer(1, 0.4 * cm),
+    ]
+
+    if transcript.participants:
+        story.append(Paragraph(f"Participants: {_esc(', '.join(transcript.participants))}", meta_style))
+        story.append(Spacer(1, 0.3 * cm))
+
+    if transcript.summary_overview:
+        story += [
+            Paragraph("Summary", section_style),
+            Paragraph(_esc(transcript.summary_overview), text_style),
+            Spacer(1, 0.3 * cm),
+        ]
+
+    if transcript.summary_action_items:
+        story.append(Paragraph("Action Items", section_style))
+        for item in transcript.summary_action_items:
+            story.append(Paragraph(f"• {_esc(item)}", bullet_style))
+        story.append(Spacer(1, 0.3 * cm))
+
+    story += [
+        HRFlowable(width="100%", thickness=1, color=colors.lightgrey),
+        Paragraph("Full Transcript", section_style),
+        Spacer(1, 0.2 * cm),
+    ]
+
+    if transcript.sentences:
+        current_speaker = None
+        for sentence in transcript.sentences:
+            spk = sentence.speaker_name
+            if spk != current_speaker:
+                current_speaker = spk
+                role = (role_map or {}).get(spk, "external")
+                if role == "internal":
+                    label = f"[BROCCOLI TEAM] {spk}"
+                    style = internal_speaker_style
+                else:
+                    label = f"[INTERVIEWEE] {spk}"
+                    style = speaker_style
+                story.append(Paragraph(_esc(label), style))
+            story.append(Paragraph(_esc(sentence.text), text_style))
+    else:
+        story.append(Paragraph("(No transcript available)", meta_style))
+
+    doc.build(story)
+    return output_path
