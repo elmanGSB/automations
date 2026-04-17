@@ -48,4 +48,5 @@ def main() -> dict:
         if not data.get("ok"):
             raise RuntimeError(f"Telegram API error: {data.get('description')}")
 
-    return {"alerted": True, "health": health, "failed_checks": failed_checks}
+    health_safe = {k: v for k, v in health.items() if k != "_error"}
+    return {"alerted": True, "health": health_safe, "failed_checks": failed_checks}
