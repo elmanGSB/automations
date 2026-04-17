@@ -70,10 +70,11 @@ def mark_meeting_processed(meeting_id: str) -> None:
 
 
 def check_and_mark_meeting(meeting_id: str) -> bool:
-    """Atomically check if meeting is new and mark it processed.
+    """Atomically check if meeting is already processed and mark it if not.
 
-    Returns True if this is the first call for this meeting_id (proceed),
-    False if already processed (skip). Uses FileLock to prevent races.
+    Returns True if meeting was already processed (caller should skip).
+    Returns False if newly claimed (caller should proceed).
+    Uses FileLock so concurrent requests cannot both pass the check.
     """
     state_file = sys.modules[__name__].STATE_FILE
     lock_path = state_file + ".lock"
@@ -81,7 +82,8 @@ def check_and_mark_meeting(meeting_id: str) -> bool:
         data = _load()
         processed = data.setdefault("_processed", [])
         if meeting_id in processed:
-            return False
+            return True
         processed.append(meeting_id)
+        data["_processed"] = processed[-500:]  # cap to last 500
         _save(data)
-    return True
+    return False
