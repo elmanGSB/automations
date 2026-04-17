@@ -15,7 +15,7 @@ def test_create_notebook_returns_id():
     mock_result.stdout = "✓ Created notebook: Test\n  ID: abc12345-0000-0000-0000-000000000000"
     mock_result.stderr = ""
 
-    with patch("subprocess.run", return_value=mock_result) as mock_run:
+    with patch("notebooklm.subprocess.run", return_value=mock_result) as mock_run:
         result = notebooklm.create_notebook("Test")
 
     assert result == "abc12345-0000-0000-0000-000000000000"
@@ -25,7 +25,7 @@ def test_create_notebook_returns_id():
 
 def test_create_notebook_raises_on_timeout():
     """create_notebook raises RuntimeError when subprocess times out."""
-    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="nlm", timeout=120)):
+    with patch("notebooklm.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="nlm", timeout=120)):
         with pytest.raises(RuntimeError, match="Timed out creating notebook"):
             notebooklm.create_notebook("Test")
 
@@ -36,7 +36,7 @@ def test_create_notebook_raises_on_nonzero_exit():
     mock_result.returncode = 1
     mock_result.stderr = "auth error"
 
-    with patch("subprocess.run", return_value=mock_result):
+    with patch("notebooklm.subprocess.run", return_value=mock_result):
         with pytest.raises(RuntimeError, match="Failed to create notebook"):
             notebooklm.create_notebook("Test")
 
@@ -50,7 +50,7 @@ def test_add_pdf_source_success():
     mock_result = MagicMock()
     mock_result.returncode = 0
 
-    with patch("subprocess.run", return_value=mock_result) as mock_run:
+    with patch("notebooklm.subprocess.run", return_value=mock_result) as mock_run:
         notebooklm.add_pdf_source("nb-123", "/tmp/test.pdf", "My Meeting")
 
     call_kwargs = mock_run.call_args[1]
@@ -59,7 +59,7 @@ def test_add_pdf_source_success():
 
 def test_add_pdf_source_raises_on_timeout():
     """add_pdf_source raises RuntimeError when subprocess times out."""
-    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="nlm", timeout=600)):
+    with patch("notebooklm.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="nlm", timeout=600)):
         with pytest.raises(RuntimeError, match="Timed out uploading PDF"):
             notebooklm.add_pdf_source("nb-123", "/tmp/test.pdf", "My Meeting")
 
@@ -70,6 +70,6 @@ def test_add_pdf_source_raises_on_nonzero_exit():
     mock_result.returncode = 1
     mock_result.stderr = "network error"
 
-    with patch("subprocess.run", return_value=mock_result):
+    with patch("notebooklm.subprocess.run", return_value=mock_result):
         with pytest.raises(RuntimeError, match="Failed to add source"):
             notebooklm.add_pdf_source("nb-123", "/tmp/test.pdf", "My Meeting")
