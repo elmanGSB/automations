@@ -43,10 +43,38 @@ def get_notebook_id(category: str) -> Optional[str]:
 
 
 def save_notebook_id(category: str, notebook_id: str) -> None:
-    """Persist a new category -> notebook ID mapping."""
-    data = _load()
-    data[category] = notebook_id
-    _save(data)
+    """Persist a new category -> notebook ID mapping. Thread-safe via FileLock."""
+    state_file = sys.modules[__name__].STATE_FILE
+    with FileLock(state_file + ".lock", timeout=10):
+        data = _load()
+        data[category] = notebook_id
+        _save(data)
+
+
+def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
+    """Atomically get or create a notebook ID for a category.
+
+    Returns (notebook_id, is_new). Calls create_fn() only when no mapping
+    exists yet. Uses optimistic concurrency — create_fn runs outside the lock
+    to avoid holding it during slow subprocess calls; re-checks inside the lock
+    before writing so only one ID is ever persisted per category.
+    """
+    # Fast path: check without lock
+    existing = _load().get(category)
+    if existing:
+        return existing, False
+
+    # Slow path: create then lock-check-write
+    notebook_id = create_fn()
+    state_file = sys.modules[__name__].STATE_FILE
+    with FileLock(state_file + ".lock", timeout=10):
+        data = _load()
+        if category in data:
+            # Another thread saved while we were creating; discard ours
+            return data[category], False
+        data[category] = notebook_id
+        _save(data)
+    return notebook_id, True
 
 
 def get_all_notebooks() -> dict:
