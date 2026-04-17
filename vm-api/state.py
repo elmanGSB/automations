@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from typing import Optional
 from filelock import FileLock
 from config import STATE_FILE as _DEFAULT_STATE_FILE
@@ -11,6 +12,12 @@ from config import STATE_FILE as _DEFAULT_STATE_FILE
 # then call reload() without losing the patched value.
 if "state" not in sys.modules or not hasattr(sys.modules.get("state"), "STATE_FILE"):
     STATE_FILE = _DEFAULT_STATE_FILE
+
+_LOCK_TIMEOUT = 10
+
+
+def _lock_path() -> str:
+    return sys.modules[__name__].STATE_FILE + ".lock"
 
 
 def _load() -> dict:
@@ -44,14 +51,13 @@ def get_notebook_id(category: str) -> Optional[str]:
 
 def save_notebook_id(category: str, notebook_id: str) -> None:
     """Persist a new category -> notebook ID mapping. Thread-safe via FileLock."""
-    state_file = sys.modules[__name__].STATE_FILE
-    with FileLock(state_file + ".lock", timeout=10):
+    with FileLock(_lock_path(), timeout=_LOCK_TIMEOUT):
         data = _load()
         data[category] = notebook_id
         _save(data)
 
 
-def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
+def get_or_create_notebook_id(category: str, create_fn: Callable[[], str]) -> tuple[str, bool]:
     """Atomically get or create a notebook ID for a category.
 
     Returns (notebook_id, is_new). Calls create_fn() only when no mapping
@@ -66,8 +72,9 @@ def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
 
     # Slow path: create then lock-check-write
     notebook_id = create_fn()
-    state_file = sys.modules[__name__].STATE_FILE
-    with FileLock(state_file + ".lock", timeout=10):
+    if not notebook_id:
+        raise ValueError(f"create_fn returned empty notebook ID for category '{category}'")
+    with FileLock(_lock_path(), timeout=_LOCK_TIMEOUT):
         data = _load()
         if category in data:
             # Another thread saved while we were creating; discard ours
@@ -90,8 +97,7 @@ def is_meeting_processed(meeting_id: str) -> bool:
 
 def mark_meeting_processed(meeting_id: str) -> None:
     """Record a meeting ID as processed. Thread-safe via FileLock."""
-    state_file = sys.modules[__name__].STATE_FILE
-    with FileLock(state_file + ".lock", timeout=10):
+    with FileLock(_lock_path(), timeout=_LOCK_TIMEOUT):
         data = _load()
         processed = data.setdefault("_processed", [])
         if meeting_id not in processed:
@@ -107,8 +113,7 @@ def is_nlm_uploaded(meeting_id: str) -> bool:
 
 def mark_nlm_uploaded(meeting_id: str) -> None:
     """Record that the NLM PDF for this meeting was successfully uploaded."""
-    state_file = sys.modules[__name__].STATE_FILE
-    with FileLock(state_file + ".lock", timeout=10):
+    with FileLock(_lock_path(), timeout=_LOCK_TIMEOUT):
         data = _load()
         uploaded = data.setdefault("_nlm_uploaded", [])
         if meeting_id not in uploaded:
@@ -124,9 +129,7 @@ def check_and_mark_meeting(meeting_id: str) -> bool:
     Returns False if newly claimed (caller should proceed).
     Uses FileLock so concurrent requests cannot both pass the check.
     """
-    state_file = sys.modules[__name__].STATE_FILE
-    lock_path = state_file + ".lock"
-    with FileLock(lock_path, timeout=10):
+    with FileLock(_lock_path(), timeout=_LOCK_TIMEOUT):
         data = _load()
         processed = data.setdefault("_processed", [])
         if meeting_id in processed:

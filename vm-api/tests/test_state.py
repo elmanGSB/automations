@@ -113,3 +113,29 @@ def test_save_notebook_id_concurrent_no_data_loss(tmp_state):
     assert not errors
     assert _state.get_notebook_id("cat-A") == "nb-1"
     assert _state.get_notebook_id("cat-B") == "nb-2"
+
+
+def test_get_or_create_concurrent_same_category_one_wins(tmp_state):
+    """Concurrent calls for the same missing category must persist exactly one ID."""
+    barrier = threading.Barrier(2)
+    results = []
+
+    def create_and_register(name):
+        barrier.wait()
+        nb_id, is_new = _state.get_or_create_notebook_id(
+            "customer-discovery",
+            lambda: f"nb-{name}",
+        )
+        results.append((nb_id, is_new))
+
+    t1 = threading.Thread(target=create_and_register, args=("t1",))
+    t2 = threading.Thread(target=create_and_register, args=("t2",))
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    persisted = _state.get_notebook_id("customer-discovery")
+    assert persisted is not None
+    # exactly one thread got is_new=True
+    assert sum(1 for _, is_new in results if is_new) == 1
+    # both threads agree on the same persisted id
+    assert results[0][0] == results[1][0] == persisted
