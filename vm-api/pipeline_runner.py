@@ -12,7 +12,7 @@ would stall the event loop and freeze all other vm-api endpoints.
 import asyncio
 import logging
 import tempfile
-from datetime import date as date_type
+from datetime import date as date_type, datetime, timezone
 
 import asyncpg
 
@@ -45,8 +45,7 @@ def _meeting_date(raw) -> str:
         return str(date_type.today())
     try:
         if isinstance(raw, (int, float)):
-            from datetime import timezone
-            return date_type.fromtimestamp(raw / 1000, tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(raw / 1000, tz=timezone.utc).date().isoformat()
         return str(raw)[:10]
     except Exception:
         logger.warning("Could not parse meeting date %r, falling back to today", raw)
@@ -185,7 +184,7 @@ def _run_pipeline(
             "reason": f"category={classification.category}",
         }
 
-    # Steps 5-11: NLM upload, analysis, and email — only for categories where
+    # Steps 5-8: NLM upload, analysis, and email — only for categories where
     # novel insight extraction makes sense (has external interviewees).
     # Classes, team-syncs, etc. skip this entire block.
     nlm_enabled = classification.category in NLM_ENABLED_CATEGORIES

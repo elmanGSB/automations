@@ -388,3 +388,26 @@ def test_pipeline_passes_transcript_date_not_today():
     assert captured["meeting_date"] == "2026-03-15", (
         f"Expected '2026-03-15', got {captured.get('meeting_date')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _meeting_date helper
+# ---------------------------------------------------------------------------
+
+def test_meeting_date_iso_string():
+    """ISO string input should return first 10 chars."""
+    assert _pr._meeting_date("2026-03-15T10:00:00.000Z") == "2026-03-15"
+
+
+def test_meeting_date_ms_timestamp():
+    """Integer ms timestamp should return the correct UTC date, not today."""
+    # 1742000000000 ms = 2025-03-15 in UTC
+    result = _pr._meeting_date(1742000000000)
+    assert result == "2025-03-15"
+
+
+def test_meeting_date_none():
+    """None/falsy input should return today's date string."""
+    from datetime import date
+    assert _pr._meeting_date(None) == str(date.today())
+    assert _pr._meeting_date(0) == str(date.today())
