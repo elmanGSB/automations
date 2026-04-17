@@ -1,0 +1,15 @@
+summary: VM Health Check
+description: Checks /health/full every 30 minutes and sends Telegram alert if degraded or unreachable.
+value:
+  modules:
+    - id: a
+      summary: Check VM health and alert if degraded
+      value:
+        type: rawscript
+        content: '!inline check_health.inline_script.py'
+        input_transforms: {}
+        language: python3
+        timeout: 30
+schema:
+  type: object
+  properties: {}
