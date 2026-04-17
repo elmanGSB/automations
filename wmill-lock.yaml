@@ -1,0 +1,5 @@
+version: v2
+locks:
+  f/discovery/fireflies_webhook.flow+__flow_hash: 462a1f82b60b21f3001b4fc759348d31a9f0b112b6a363f69d1aa7a0b475a680
+  f/discovery/fireflies_webhook.flow+forward_to_vm_api.inline_script.py: a7d10f03af85a6e229db76c8e61294b995511cc00a5bb4dfbe234884235e7e57
+  f/discovery/fireflies_webhook.flow+validate_event.inline_script.py: 40148e1a0fd59dc1db41df3dfe34285484768c184f8fd337222783c72835a6cb

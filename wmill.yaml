@@ -1,0 +1,7 @@
+defaultTs: bun
+includes:
+  - f/**
+  - s/**
+  - u/**
+skipSecrets: true
+includeSchedules: true
