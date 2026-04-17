@@ -223,6 +223,42 @@ def test_pipeline_skips_extraction_for_non_discovery_category():
 
 
 # ---------------------------------------------------------------------------
+# Guard: NLM + email skipped for non-enabled categories (classes, team-syncs)
+# ---------------------------------------------------------------------------
+
+def test_pipeline_skips_nlm_and_email_for_class_meetings():
+    """Class meetings must skip NLM upload, analysis, and email entirely."""
+    mock_transcript, _, make_ff = _full_happy_path_patches()
+    class_cls = make_mock_classification(category="class-mge")
+
+    with patch("pipeline_runner.is_meeting_processed", return_value=False), \
+         patch("pipeline_runner.mark_meeting_processed"), \
+         patch("pipeline_runner._run_on_loop", side_effect=_test_async_runner), \
+         patch("pipeline_runner.FirefliesClient", return_value=make_ff()), \
+         patch("pipeline_runner.classify_meeting", new_callable=AsyncMock, return_value=class_cls), \
+         patch("pipeline_runner.classify_speakers", return_value={"Elman": "internal"}), \
+         patch("pipeline_runner.format_with_roles", return_value="labeled"), \
+         patch("pipeline_runner.format_external_with_context", return_value=""), \
+         patch("pipeline_runner.get_notebook_id") as mock_nb, \
+         patch("pipeline_runner.add_pdf_source") as mock_upload, \
+         patch("pipeline_runner.analyze_novel") as mock_analyze, \
+         patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
+         patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
+         patch("pipeline_runner.retain_novel_insights", new_callable=AsyncMock):
+        result = _pr.run_meeting_pipeline("class-meeting-1", MagicMock(), _mock_loop())
+
+    assert result["status"] == "completed"
+    assert result["steps"]["notebooklm_notebook"]["status"] == "skipped"
+    assert result["steps"]["notebooklm_upload"]["status"] == "skipped"
+    assert result["steps"]["nlm_analysis"]["status"] == "skipped"
+    assert result["steps"]["email"]["status"] == "skipped"
+    mock_nb.assert_not_called()
+    mock_upload.assert_not_called()
+    mock_analyze.assert_not_called()
+    mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Idempotency: mark_processed fires after NLM upload, not before fetch
 # ---------------------------------------------------------------------------
 

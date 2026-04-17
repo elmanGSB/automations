@@ -13,6 +13,11 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.jso
 
 INTERNAL_TEAM_NAMES = ["elman", "klara", "broccoli"]
 
+# Categories that trigger NotebookLM analysis + novel insights email.
+# Classes, team syncs, and internal meetings are excluded — no interviewees,
+# so the NLM prompt returns nothing useful and emails are noise.
+NLM_ENABLED_CATEGORIES = {"customer-discovery"}
+
 KNOWN_CATEGORIES = {
     "customer-discovery": "Customer Interviews & Sales",
     "investor-calls": "Investor Calls",

@@ -18,7 +18,7 @@ import asyncpg
 
 from analyzer import analyze_novel
 from classifier import classify_meeting
-from config import FIREFLIES_API_KEY, INTERNAL_TEAM_NAMES
+from config import FIREFLIES_API_KEY, INTERNAL_TEAM_NAMES, NLM_ENABLED_CATEGORIES
 from discovery_extractor import process_discovery_meeting
 from emailer import send_novel_report
 from fireflies import FirefliesClient
@@ -167,79 +167,90 @@ def _run_pipeline(
             "reason": f"category={classification.category}",
         }
 
-    # Step 5: Get or create NotebookLM notebook
-    try:
-        notebook_id = get_notebook_id(classification.category)
-        is_new_notebook = notebook_id is None
-        if is_new_notebook:
-            nb_title = notebook_title_for_category(classification.category)
-            notebook_id = create_notebook(nb_title)
-            save_notebook_id(classification.category, notebook_id)
-        result["steps"]["notebooklm_notebook"] = {
-            "status": "ok",
-            "notebook_id": notebook_id,
-            "is_new": is_new_notebook,
-        }
-    except Exception:
-        logger.exception("NotebookLM notebook step failed for meeting %s", meeting_id)
-        result["steps"]["notebooklm_notebook"] = {"status": "error", "error": "notebook_failed"}
-        return result
+    # Steps 5-9: NLM upload, analysis, and email — only for categories where
+    # novel insight extraction makes sense (has external interviewees).
+    # Classes, team-syncs, etc. skip this entire block.
+    nlm_enabled = classification.category in NLM_ENABLED_CATEGORIES
+    analysis = None
 
-    # Step 6: Generate PDF and upload to notebook
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pdf_path = generate_transcript_pdf(transcript, tmpdir, role_map=role_map)
-            add_pdf_source(notebook_id, pdf_path, transcript.title)
-        result["steps"]["notebooklm_upload"] = {"status": "ok"}
-    except Exception:
-        logger.exception("NLM upload failed for meeting %s", meeting_id)
-        result["steps"]["notebooklm_upload"] = {"status": "error", "error": "upload_failed"}
-        return result
+    if not nlm_enabled:
+        skipped = {"status": "skipped", "reason": f"category={classification.category}"}
+        result["steps"]["notebooklm_notebook"] = skipped
+        result["steps"]["notebooklm_upload"] = skipped
+        result["steps"]["nlm_analysis"] = skipped
+        result["steps"]["email"] = skipped
+    else:
+        # Step 5: Get or create NotebookLM notebook
+        try:
+            notebook_id = get_notebook_id(classification.category)
+            is_new_notebook = notebook_id is None
+            if is_new_notebook:
+                nb_title = notebook_title_for_category(classification.category)
+                notebook_id = create_notebook(nb_title)
+                save_notebook_id(classification.category, notebook_id)
+            result["steps"]["notebooklm_notebook"] = {
+                "status": "ok",
+                "notebook_id": notebook_id,
+                "is_new": is_new_notebook,
+            }
+        except Exception:
+            logger.exception("NotebookLM notebook step failed for meeting %s", meeting_id)
+            result["steps"]["notebooklm_notebook"] = {"status": "error", "error": "notebook_failed"}
+            return result
 
-    # Step 7: Query novel insights
-    try:
-        analysis = analyze_novel(notebook_id)
-        result["steps"]["nlm_analysis"] = {
-            "status": "ok",
-            "novel_length": len(analysis.novel),
-        }
-        result["novel_insights"] = analysis.novel
-    except Exception:
-        logger.exception("NLM analysis failed for meeting %s", meeting_id)
-        result["steps"]["nlm_analysis"] = {"status": "error", "error": "analysis_failed"}
-        return result
+        # Step 6: Generate PDF and upload to notebook
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                pdf_path = generate_transcript_pdf(transcript, tmpdir, role_map=role_map)
+                add_pdf_source(notebook_id, pdf_path, transcript.title)
+            result["steps"]["notebooklm_upload"] = {"status": "ok"}
+        except Exception:
+            logger.exception("NLM upload failed for meeting %s", meeting_id)
+            result["steps"]["notebooklm_upload"] = {"status": "error", "error": "upload_failed"}
+            return result
 
-    # Step 8: Mark as processed — after NLM upload succeeds, before email.
-    # Transient pre-upload failures stay retryable; post-upload steps (email,
-    # Hindsight) are non-fatal and can be re-sent manually if needed.
-    # This position prevents duplicate NLM PDF uploads on Windmill retry.
+        # Step 7: Query novel insights
+        try:
+            analysis = analyze_novel(notebook_id)
+            result["steps"]["nlm_analysis"] = {
+                "status": "ok",
+                "novel_length": len(analysis.novel),
+            }
+            result["novel_insights"] = analysis.novel
+        except Exception:
+            logger.exception("NLM analysis failed for meeting %s", meeting_id)
+            result["steps"]["nlm_analysis"] = {"status": "error", "error": "analysis_failed"}
+            return result
+
+        # Step 9: Email report (non-fatal; guard against empty novel)
+        if analysis.novel.strip():
+            try:
+                asyncio.run(send_novel_report(transcript.title, classification.category, analysis.novel))
+                result["steps"]["email"] = {"status": "ok"}
+            except Exception:
+                logger.exception("Email failed for meeting %s (non-fatal)", meeting_id)
+                result["steps"]["email"] = {"status": "error", "error": "email_failed"}
+        else:
+            logger.warning("Meeting %s: NLM returned empty novel insights — skipping email", meeting_id)
+            result["steps"]["email"] = {"status": "skipped", "reason": "empty_novel"}
+
+    # Step 8: Mark as processed — after NLM work (or skip), before Hindsight.
     mark_meeting_processed(meeting_id)
     result["steps"]["mark_processed"] = {"status": "ok"}
     logger.info("Meeting %s marked as processed", meeting_id)
 
-    # Step 9: Email report (non-fatal; guard against empty novel)
-    if analysis.novel.strip():
-        try:
-            asyncio.run(send_novel_report(transcript.title, classification.category, analysis.novel))
-            result["steps"]["email"] = {"status": "ok"}
-        except Exception:
-            logger.exception("Email failed for meeting %s (non-fatal)", meeting_id)
-            result["steps"]["email"] = {"status": "error", "error": "email_failed"}
-    else:
-        logger.warning("Meeting %s: NLM returned empty novel insights — skipping email", meeting_id)
-        result["steps"]["email"] = {"status": "skipped", "reason": "empty_novel"}
-
     # Step 10: Retain in Hindsight (non-fatal)
     try:
         asyncio.run(retain_meeting(transcript, classification))
-        asyncio.run(retain_novel_insights(transcript.title, classification.category, analysis.novel))
+        if analysis is not None and analysis.novel.strip():
+            asyncio.run(retain_novel_insights(transcript.title, classification.category, analysis.novel))
         result["steps"]["hindsight"] = {"status": "ok"}
     except Exception:
         logger.exception("Hindsight retention failed for meeting %s (non-fatal)", meeting_id)
         result["steps"]["hindsight"] = {"status": "error", "error": "hindsight_failed"}
 
     # Step 11: Notify on new unknown category (non-fatal)
-    if is_new_notebook and classification.is_new_category:
+    if nlm_enabled and is_new_notebook and classification.is_new_category:
         try:
             notify_new_category(
                 category=classification.category,
