@@ -47,7 +47,17 @@ def tmp_state_empty(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def app_client(mock_app_globals):
+def tmp_state_with_invalid_notebook(tmp_path, monkeypatch):
+    state_file = str(tmp_path / "state.json")
+    with open(state_file, "w") as f:
+        json.dump({"customer-discovery": "not-a-uuid"}, f)
+    import state
+    monkeypatch.setattr(state, "STATE_FILE", state_file)
+    return state_file
+
+
+@pytest.fixture
+async def app_client(mock_app_globals):
     from main import app
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
@@ -112,3 +122,17 @@ async def test_digest_requires_auth(app_client, monkeypatch):
     async with app_client as client:
         resp = await client.post("/api/digest/run")
     assert resp.status_code == 401
+
+
+async def test_digest_rejects_invalid_notebook_id(app_client, tmp_state_with_invalid_notebook, monkeypatch):
+    import main
+    monkeypatch.setattr(main, "VM_API_SECRET", VM_SECRET)
+    async with app_client as client:
+        resp = await client.post(
+            "/api/digest/run",
+            headers={"Authorization": f"Bearer {VM_SECRET}"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"]["customer-discovery"]["status"] == "error"
+    assert data["results"]["customer-discovery"]["error"] == "invalid_notebook_id"

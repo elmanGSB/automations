@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 
 from analyzer import analyze_patterns
+from config import NLM_ENABLED_CATEGORIES
 from discovery_extractor import process_discovery_meeting
 from emailer import send_patterns_report
 from fireflies import FirefliesClient
@@ -163,8 +164,6 @@ def run_digest_endpoint() -> dict[str, Any]:
     """
     if app_event_loop is None:
         raise HTTPException(status_code=503, detail="App not initialized")
-
-    from config import NLM_ENABLED_CATEGORIES
 
     notebooks = get_all_notebooks()
     results: dict[str, Any] = {}
