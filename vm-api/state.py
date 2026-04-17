@@ -61,12 +61,32 @@ def is_meeting_processed(meeting_id: str) -> bool:
 
 
 def mark_meeting_processed(meeting_id: str) -> None:
-    """Record a meeting ID as processed to prevent duplicate runs."""
-    data = _load()
-    processed = data.setdefault("_processed", [])
-    if meeting_id not in processed:
-        processed.append(meeting_id)
-    _save(data)
+    """Record a meeting ID as processed. Thread-safe via FileLock."""
+    state_file = sys.modules[__name__].STATE_FILE
+    with FileLock(state_file + ".lock", timeout=10):
+        data = _load()
+        processed = data.setdefault("_processed", [])
+        if meeting_id not in processed:
+            processed.append(meeting_id)
+        data["_processed"] = processed[-500:]
+        _save(data)
+
+
+def is_nlm_uploaded(meeting_id: str) -> bool:
+    """Return True if the NLM PDF for this meeting was already uploaded."""
+    return meeting_id in _load().get("_nlm_uploaded", [])
+
+
+def mark_nlm_uploaded(meeting_id: str) -> None:
+    """Record that the NLM PDF for this meeting was successfully uploaded."""
+    state_file = sys.modules[__name__].STATE_FILE
+    with FileLock(state_file + ".lock", timeout=10):
+        data = _load()
+        uploaded = data.setdefault("_nlm_uploaded", [])
+        if meeting_id not in uploaded:
+            uploaded.append(meeting_id)
+        data["_nlm_uploaded"] = uploaded[-500:]
+        _save(data)
 
 
 def check_and_mark_meeting(meeting_id: str) -> bool:
