@@ -1,153 +1,121 @@
-# Interview Router
+# Broccoli AI Automations
 
-Automated pipeline that receives Fireflies webhooks, classifies meetings, generates role-labeled transcripts, and routes them to NotebookLM notebooks for AI analysis. Sends novel insight reports by email after each meeting.
+Meeting intelligence pipeline: Fireflies webhooks → classify → extract → NotebookLM → email insights. Orchestrated by Windmill, executed on the Paperclip VM.
 
-## Architecture
+## System Overview
 
 ```
-Fireflies webhook
-      ↓
-POST /webhook/fireflies  (main.py)
-      ↓
-classify_speakers()      (speaker_roles.py)   → who is internal vs external
-      ↓
-format transcripts       (transcript_formatter.py)
-  ├── labeled_transcript   [BROCCOLI TEAM] / [INTERVIEWEE] tags
-  └── external_transcript  [CONTEXT/QUESTION] Elman: ... / [INTERVIEWEE] ...
-      ↓
-classify_meeting()       (classifier.py)      → meeting category
-      ↓
-┌─────────────────────────────────────────────┐
-│ if customer-discovery                        │
-│   process_discovery_meeting()               │ → Postgres + Teable
-│   (discovery_extractor.py)                 │
-└─────────────────────────────────────────────┘
-      ↓
-generate_transcript_pdf()  (pdf_generator.py) → role-labeled PDF
-      ↓
-NotebookLM notebook        (notebooklm.py)    → add PDF as source
-      ↓
-analyze_novel()            (analyzer.py)      → novel insights vs prior meetings
-      ↓
-send_novel_report()        (emailer.py)       → email to founders
-      ↓
-retain in Hindsight        (hindsight.py)     → long-term memory
+GitHub (this repo)
+  ↓  push to main
+GitHub Actions → wmill sync push → Windmill
+
+Fireflies transcript ready
+  ↓
+Windmill: fireflies_webhook flow
+  ↓ validate event
+  ↓ POST /webhook/fireflies → VM API (paperclip-vm :3101)
+     ↓ 10-step pipeline (see vm-api/README.md)
+     ↓ results per step returned as structured JSON
+  ↓ alert on fatal step errors (Telegram)
+
+Monday 9am UTC
+  ↓
+Windmill: weekly_digest flow
+  ↓ POST /api/digest/run → VM API
+     ↓ NotebookLM aggregate patterns analysis
+     ↓ email report to founders (AgentMail)
+  ↓ alert on failure (Telegram)
+
+Every 30 min
+  ↓
+Windmill: health_check flow
+  ↓ GET /health/full → VM API
+     ↓ checks: Postgres + Claude proxy
+  ↓ alert if degraded (Telegram)
 ```
 
-## Speaker Role System
+## Windmill Flows
 
-Every transcript is labeled before any AI step runs:
+| Flow | Path | Trigger | Purpose |
+|------|------|---------|---------|
+| `fireflies_webhook` | `f/discovery/fireflies_webhook.flow` | Fireflies webhook event | Validate → run 10-step meeting pipeline → Telegram on error |
+| `weekly_digest` | `f/automations/weekly_digest.flow` | Monday 9am UTC | Aggregate patterns analysis → email report to founders |
+| `health_check` | `f/automations/health_check.flow` | Every 30 min | Ping VM health endpoint → Telegram alert if degraded |
 
-| Label | Who | Used for |
-|-------|-----|----------|
-| `[BROCCOLI TEAM] Name:` | Elman, Klara, or anyone matching `INTERNAL_TEAM_NAMES` | Context only — not extracted as insights |
-| `[INTERVIEWEE] Name:` | External party | Primary data source for all AI analysis |
-| `[CONTEXT/QUESTION] Name: ...` | Internal team question (in extraction format) | Frames the interviewee's next response |
+## VM API
 
-**Two transcript variants are produced per meeting:**
+The pipeline logic runs on the Paperclip VM (`paperclip-vm`, port 3101). See [`vm-api/README.md`](vm-api/README.md) for the full 10-step pipeline, category filters, idempotency design, and deployment instructions.
 
-- `labeled_transcript` — full conversation with `[BROCCOLI TEAM]`/`[INTERVIEWEE]` tags. Used by the classifier and uploaded to NotebookLM as the PDF.
-- `external_transcript` — collapses internal turns into `[CONTEXT/QUESTION]` blocks. Used by the discovery extractor so insights come exclusively from the interviewee.
+**Endpoints used by Windmill:**
 
-Internal team members are matched by substring (case-insensitive) against `INTERNAL_TEAM_NAMES` in `config.py`. Add names there to expand the team.
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `POST` | `/webhook/fireflies` | Bearer token | Run full meeting pipeline |
+| `POST` | `/api/digest/run` | Bearer token | Run weekly patterns analysis + email |
+| `GET` | `/health/full` | Bearer token | Check Postgres + Claude proxy |
+| `GET` | `/health` | None | Liveness check |
+
+## Emails Sent
+
+All emails come from `customer_discovery@agentmail.to` to `elman@stanford.edu` and `kklara@stanford.edu`.
+
+| Email | Trigger | Subject pattern |
+|-------|---------|----------------|
+| Novel insights | After each new `customer-discovery` meeting | `[Customer Discovery] New Interview: <title>` |
+| Weekly patterns | Monday 9am UTC | `[Weekly] Interview Patterns — Customer Discovery` |
+
+Only `customer-discovery` meetings generate emails. All other categories (classes, investor calls, team syncs, advisors, tools-research) are classified and stored but skip NotebookLM and email entirely.
 
 ## Meeting Categories
 
-The classifier assigns each meeting to a category. Each category gets its own NotebookLM notebook.
+| Slug | Description | Email? |
+|------|-------------|--------|
+| `customer-discovery` | Customer interviews, sales calls, prospect demos | ✅ |
+| `investor-calls` | VCs, angels, fundraising | — |
+| `team-syncs` | Internal standups, retrospectives | — |
+| `competitors` | Competitive research calls | — |
+| `advisors` | Advisor/mentor meetings — business strategy and growth guidance | — |
+| `tools-research` | Technical tool evaluation, software product demos | — |
+| `class-mge` | Managing Growing Enterprises | — |
+| `class-sales` | Building Sales Organizations | — |
+| `class-leadership` | The Art of Leading in Challenging Times | — |
+| `class-taxes` | Taxes and Business Strategy | — |
+| `class-fsa` | Financial Statement Analysis | — |
 
-**Business meetings:**
-| Slug | Description |
-|------|-------------|
-| `customer-discovery` | Customer interviews, sales calls, distributor/retailer/supplier conversations |
-| `investor-calls` | VCs, angels, fundraising |
-| `team-syncs` | Internal standups, retrospectives |
-| `competitors` | Competitive research calls |
-| `advisors` | Advisor and mentor meetings (business mentorship, strategy, growth guidance) |
-| `tools-research` | Technical tool evaluation, workflow automation research, software product evaluations |
+## CI/CD
 
-**Stanford GSB classes (Q3 2026):**
-| Slug | Course |
-|------|--------|
-| `class-mge` | Managing Growing Enterprises |
-| `class-sales` | Building Sales Organizations |
-| `class-leadership` | The Art of Leading in Challenging Times |
-| `class-taxes` | Taxes and Business Strategy |
-| `class-fsa` | Financial Statement Analysis |
-
-Unknown meeting types get a generated slug (e.g. `conference-panel`).
-
-## Deduplication
-
-Processed meeting IDs are stored in `state.json`. The pipeline skips any `meeting_id` it has already seen — so if multiple team members are on the same Fireflies call, only one email is sent.
-
-## Setup
-
-**Environment variables** (`.env` file or system env):
+Pushing to `main` automatically syncs all Windmill flows, schedules, and variables via GitHub Actions (`.github/workflows/wmill-sync.yml`). Commits prefixed with `[WM]` are skipped to prevent Windmill → GitHub → Windmill loops.
 
 ```bash
-FIREFLIES_API_KEY=...
-FIREFLIES_WEBHOOK_SECRET=...   # optional — skips signature check if empty
-TELEGRAM_BOT_TOKEN=...          # optional — for Telegram notifications
-TELEGRAM_CHAT_ID=...
+# Sync manually if needed
+wmill sync push --yes --skip-secrets \
+  --workspace broccolli-ai-automations \
+  --token $WMILL_TOKEN \
+  --base-url https://app.windmill.dev/
 ```
 
-**Install dependencies:**
+## Workspace
 
-```bash
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
+- **Windmill:** `broccolli-ai-automations` at app.windmill.dev
+- **VM:** `paperclip-vm` (GCP `us-central1-f`, project `paperclip-tribuai`)
+- **VM API port:** 3101
+
+## Repository Structure
+
 ```
-
-**Run locally:**
-
-```bash
-venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001
+f/                        Windmill flows (synced on push to main)
+  discovery/
+    fireflies_webhook.flow/
+  automations/
+    weekly_digest.flow/
+    health_check.flow/
+vm-api/                   VM API — FastAPI app with full pipeline logic
+  main.py
+  pipeline_runner.py
+  classifier.py
+  emailer.py
+  ...
+.github/workflows/
+  wmill-sync.yml          Auto-sync to Windmill on push to main
+wmill.yaml                Windmill sync config
 ```
-
-**Run tests:**
-
-```bash
-venv/bin/pytest tests/ -v
-```
-
-## Service (systemd)
-
-The service runs on `paperclip-vm` at port 8001.
-
-```bash
-sudo systemctl status interview-router
-sudo systemctl restart interview-router
-journalctl -u interview-router -f
-```
-
-## Manual Trigger
-
-Re-process or force-process a specific meeting:
-
-```bash
-curl -X POST http://localhost:8001/webhook/fireflies \
-  -H 'Content-Type: application/json' \
-  -d '{"event":"meeting.transcribed","meeting_id":"<MEETING_ID>"}'
-```
-
-To re-process an already-processed meeting, remove its ID from `state.json` first.
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `main.py` | FastAPI app, webhook handler, signature verification |
-| `pipeline.py` | Orchestrates the full meeting processing flow |
-| `config.py` | API keys, known categories, internal team names |
-| `speaker_roles.py` | Classifies speakers as internal or external |
-| `transcript_formatter.py` | Produces labeled and external-only transcript formats |
-| `classifier.py` | Sends transcript to Claude proxy, returns meeting category |
-| `discovery_extractor.py` | Extracts structured insights from customer-discovery calls |
-| `pdf_generator.py` | Generates role-labeled PDF for NotebookLM upload |
-| `notebooklm.py` | Creates notebooks and uploads PDF sources |
-| `analyzer.py` | Queries NotebookLM for novel insights via the AI prompt |
-| `emailer.py` | Sends insight report emails via AgentMail |
-| `hindsight.py` | Retains meeting context in Hindsight long-term memory |
-| `state.py` | Reads/writes `state.json` — processed meeting IDs + notebook IDs |
-| `weekly_report.py` | Runs the patterns analysis prompt across all notebooks |
-| `telegram_bot.py` | Sends Telegram alerts for new meeting categories |
