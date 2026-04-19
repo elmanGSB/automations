@@ -42,18 +42,6 @@ mutation UpdateTranscript($id: String!, $title: String!) {
 }
 """
 
-MEETINGS_QUERY = """
-query GetMeetings($limit: Int!) {
-  meetings(limit: $limit) {
-    id
-    title
-    date
-    participants {
-      name
-    }
-  }
-}
-"""
 
 
 @dataclass
@@ -141,51 +129,6 @@ class FirefliesClient:
             raise RuntimeError(f"Failed to update transcript: {transcript_id}")
         return update_data.get("title") or ""
 
-    async def list_generic_meetings(self, limit: int = 100) -> list[dict]:
-        """List meetings with generic/auto-generated names (dates, random strings, etc.)."""
-        import re
-
-        response = await self._client.post(
-            FIREFLIES_GRAPHQL_URL,
-            json={"query": MEETINGS_QUERY, "variables": {"limit": limit}},
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if "errors" in payload:
-            errors = payload["errors"]
-            msg = errors[0].get("message", "Unknown GraphQL error") if errors else "Unknown GraphQL error"
-            raise RuntimeError(f"Fireflies API error: {msg}")
-
-        meetings = payload.get("data", {}).get("meetings", [])
-
-        # Patterns for generic/auto-generated names
-        generic_patterns = [
-            r'^\d{4}-\d{2}-\d{2}',  # Dates
-            r'^[a-z]{3,5}-[a-z]{3,5}-[a-z]{3,5}',  # Random like vze-ihdw-zov
-            r'^apr-\d{2}',  # Month-day
-            r'^\d{1,2}:\d{2}\s[ap]\.?m',  # Times
-        ]
-
-        generic = []
-        for meeting in meetings:
-            title = meeting.get("title", "").strip()
-            is_generic = (
-                any(re.match(pattern, title, re.IGNORECASE) for pattern in generic_patterns) or
-                len(title) < 8 or
-                title.count('-') > 2
-            )
-
-            if is_generic:
-                generic.append({
-                    "id": meeting["id"],
-                    "title": title,
-                    "date": meeting.get("date", ""),
-                    "participants": len(meeting.get("participants", [])),
-                })
-
-        # Sort by date (newest first)
-        generic.sort(key=lambda x: x["date"], reverse=True)
-        return generic
 
     async def aclose(self) -> None:
         await self._client.aclose()
