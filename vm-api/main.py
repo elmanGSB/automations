@@ -5,6 +5,7 @@ Runs on port 3101. Consolidates:
   - /api/leads          — demo form submissions from broccolli.ai
   - /webhook/fireflies  — Fireflies meeting extraction trigger (called by Windmill)
   - /api/pipeline/run   — full discovery pipeline (Windmill calls this)
+  - /api/digest/run     — weekly aggregate patterns analysis for all NLM notebooks
   - /health, /health/full — liveness + dependency checks
   - /api/interviews     — read recent interviews
 
@@ -20,7 +21,9 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
+from typing import Any
 
 import asyncpg
 import httpx
@@ -28,9 +31,13 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 
+from analyzer import analyze_patterns
+from config import NLM_ENABLED_CATEGORIES
 from discovery_extractor import process_discovery_meeting
+from emailer import send_patterns_report
 from fireflies import FirefliesClient
 from pipeline_runner import run_meeting_pipeline
+from state import get_all_notebooks
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -45,6 +52,8 @@ VM_API_SECRET = os.environ.get("VM_API_SECRET", "")
 
 pool: asyncpg.Pool | None = None
 app_event_loop: asyncio.AbstractEventLoop | None = None
+
+_UUID_RE = re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
 
 
 @asynccontextmanager
@@ -103,22 +112,22 @@ async def health():
     return {"status": "ok"}
 
 
-@app.get("/health/full")
+@app.get("/health/full", dependencies=[Depends(require_auth)])
 async def health_full():
     checks: dict[str, str] = {}
 
     try:
         await pool.fetchval("SELECT 1")
         checks["postgres"] = "ok"
-    except Exception as e:
-        checks["postgres"] = f"error: {e}"
+    except Exception:
+        checks["postgres"] = "error: connection failed"
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.get("http://127.0.0.1:8199/health")
         checks["claude_proxy"] = "ok"  # any response means it's reachable
-    except Exception as e:
-        checks["claude_proxy"] = f"error: {e}"
+    except Exception:
+        checks["claude_proxy"] = "error: connection failed"
 
     overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     return {"status": overall, "checks": checks}
@@ -140,6 +149,45 @@ def run_pipeline_endpoint(req: PipelineRunRequest):
     if pool is None or app_event_loop is None:
         raise HTTPException(status_code=503, detail="App not initialized")
     return run_meeting_pipeline(req.meeting_id, pool, app_event_loop)
+
+
+# ---------------------------------------------------------------------------
+# Digest endpoint
+# ---------------------------------------------------------------------------
+
+@app.post("/api/digest/run", dependencies=[Depends(require_auth)])
+def run_digest_endpoint() -> dict[str, Any]:
+    """Run weekly aggregate patterns analysis for all NLM-enabled notebooks.
+
+    Plain def — runs in FastAPI threadpool. Subprocess calls (nlm CLI) are safe here.
+    Uses run_coroutine_threadsafe to dispatch async email via the main event loop.
+    """
+    if app_event_loop is None:
+        raise HTTPException(status_code=503, detail="App not initialized")
+
+    notebooks = get_all_notebooks()
+    results: dict[str, Any] = {}
+
+    for category in NLM_ENABLED_CATEGORIES:
+        notebook_id = notebooks.get(category)
+        if not notebook_id:
+            results[category] = {"status": "skipped", "reason": "no_notebook"}
+            continue
+        if not _UUID_RE.match(notebook_id):
+            logger.error("Invalid notebook_id format for category %s: %r", category, notebook_id)
+            results[category] = {"status": "error", "error": "invalid_notebook_id"}
+            continue
+        try:
+            patterns = analyze_patterns(notebook_id)
+            asyncio.run_coroutine_threadsafe(
+                send_patterns_report(category, patterns), app_event_loop
+            ).result(timeout=30)
+            results[category] = {"status": "ok", "patterns_char_count": len(patterns)}
+        except Exception:
+            logger.exception("Digest failed for category %s (non-fatal)", category)
+            results[category] = {"status": "error", "error": "digest_failed"}
+
+    return {"status": "completed", "results": results}
 
 
 # ---------------------------------------------------------------------------

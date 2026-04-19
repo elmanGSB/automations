@@ -37,6 +37,34 @@ value:
         lock: '!inline forward_to_vm_api.inline_script.lock'
         language: python3
         timeout: 960
+    - id: c
+      summary: Alert on pipeline failure
+      value:
+        type: rawscript
+        content: '!inline alert_on_failure.inline_script.py'
+        input_transforms:
+          pipeline_result:
+            type: javascript
+            expr: results.b
+          meeting_id:
+            type: javascript
+            expr: results.a.meeting_id
+        language: python3
+        timeout: 30
+  failure_module:
+    id: failure
+    summary: Alert on flow-level failure (VM unreachable, timeout, 5xx)
+    value:
+      type: rawscript
+      content: '!inline notify_flow_failure.inline_script.py'
+      language: python3
+      input_transforms:
+        error:
+          type: javascript
+          expr: error
+        flow_input:
+          type: javascript
+          expr: flow_input
 schema:
   type: object
   properties:
