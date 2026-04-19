@@ -1,0 +1,35 @@
+name: Sync to Windmill
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  WMILL_URL: https://app.windmill.dev/
+  WMILL_WORKSPACE: broccolli-ai-automations
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Skip Windmill-originated commits
+        id: check
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          [[ "$MSG" =~ ^\[WM\] ]] && echo "skip=true" >> $GITHUB_OUTPUT || true
+
+      - name: Push to Windmill
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          npm install -g windmill-cli
+          wmill sync push --yes --skip-secrets \
+            --workspace ${{ env.WMILL_WORKSPACE }} \
+            --token ${{ secrets.WMILL_TOKEN }} \
+            --base-url ${{ env.WMILL_URL }}
