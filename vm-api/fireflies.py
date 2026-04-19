@@ -33,6 +33,15 @@ query GetTranscript($id: String!) {
 }
 """
 
+UPDATE_TRANSCRIPT_MUTATION = """
+mutation UpdateTranscript($id: String!, $title: String!) {
+  updateTranscript(id: $id, title: $title) {
+    id
+    title
+  }
+}
+"""
+
 
 @dataclass
 class Sentence:
@@ -100,6 +109,24 @@ class FirefliesClient:
             summary_action_items=summary.get("action_items") or [],
             summary_keywords=summary.get("keywords") or [],
         )
+
+    async def update_transcript_title(self, transcript_id: str, title: str) -> str:
+        """Update a transcript's title. Returns the new title."""
+        response = await self._client.post(
+            FIREFLIES_GRAPHQL_URL,
+            json={"query": UPDATE_TRANSCRIPT_MUTATION, "variables": {"id": transcript_id, "title": title}},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if "errors" in payload:
+            errors = payload["errors"]
+            msg = errors[0].get("message", "Unknown GraphQL error") if errors else "Unknown GraphQL error"
+            raise RuntimeError(f"Fireflies API error: {msg}")
+        data = payload.get("data", {})
+        update_data = data.get("updateTranscript")
+        if update_data is None:
+            raise RuntimeError(f"Failed to update transcript: {transcript_id}")
+        return update_data.get("title") or ""
 
     async def aclose(self) -> None:
         await self._client.aclose()
