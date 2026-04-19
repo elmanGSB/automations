@@ -24,6 +24,7 @@ KNOWN_CATEGORIES = {
     "team-syncs": "Team Syncs",
     "competitors": "Competitor Research",
     "advisors": "Advisors",
+    "tools-research": "Tools & Technical Research",
     "class-mge": "MGE — Managing Growing Enterprises",
     "class-sales": "Sales — Building Sales Organizations",
     "class-leadership": "Leadership — Art of Leading in Challenging Times",
