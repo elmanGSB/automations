@@ -33,9 +33,9 @@ query GetTranscript($id: String!) {
 }
 """
 
-UPDATE_TRANSCRIPT_MUTATION = """
-mutation UpdateTranscript($id: String!, $title: String!) {
-  updateTranscript(id: $id, title: $title) {
+UPDATE_MEETING_TITLE_MUTATION = """
+mutation UpdateMeetingTitle($input: UpdateMeetingTitleInput!) {
+  updateMeetingTitle(input: $input) {
     id
     title
   }
@@ -111,11 +111,11 @@ class FirefliesClient:
             summary_keywords=summary.get("keywords") or [],
         )
 
-    async def update_transcript_title(self, transcript_id: str, title: str) -> str:
-        """Update a transcript's title. Returns the new title."""
+    async def update_meeting_title(self, meeting_id: str, title: str) -> str:
+        """Update a meeting's title. Returns the new title."""
         response = await self._client.post(
             FIREFLIES_GRAPHQL_URL,
-            json={"query": UPDATE_TRANSCRIPT_MUTATION, "variables": {"id": transcript_id, "title": title}},
+            json={"query": UPDATE_MEETING_TITLE_MUTATION, "variables": {"input": {"id": meeting_id, "title": title}}},
         )
         response.raise_for_status()
         payload = response.json()
@@ -124,9 +124,9 @@ class FirefliesClient:
             msg = errors[0].get("message", "Unknown GraphQL error") if errors else "Unknown GraphQL error"
             raise RuntimeError(f"Fireflies API error: {msg}")
         data = payload.get("data", {})
-        update_data = data.get("updateTranscript")
+        update_data = data.get("updateMeetingTitle")
         if update_data is None:
-            raise RuntimeError(f"Failed to update transcript: {transcript_id}")
+            raise RuntimeError(f"Failed to update meeting: {meeting_id}")
         return update_data.get("title") or ""
 
 
