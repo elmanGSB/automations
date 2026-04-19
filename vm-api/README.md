@@ -68,7 +68,8 @@ Classes, team syncs, and internal meetings skip Steps ⑤–⑧ entirely — no 
 | `investor-calls` | VCs, angels, fundraising | — | — |
 | `team-syncs` | Internal standups, retrospectives | — | — |
 | `competitors` | Competitive research calls | — | — |
-| `advisors` | Advisor and mentor meetings | — | — |
+| `advisors` | Advisor and mentor meetings (business mentorship, strategy, growth guidance) | — | — |
+| `tools-research` | Technical tool evaluation, workflow automation research, software product evaluations | — | — |
 | `class-mge` | Managing Growing Enterprises | — | — |
 | `class-sales` | Building Sales Organizations | — | — |
 | `class-leadership` | The Art of Leading in Challenging Times | — | — |
@@ -92,7 +93,7 @@ Internal speakers get the `[BROCCOLI TEAM]` label. External speakers get `[INTER
 
 | Prompt | File | Purpose |
 |--------|------|---------|
-| Meeting classifier | [`classifier.py` — `SYSTEM_PROMPT`](classifier.py#L9) | Assigns a category slug to each meeting based on title, participants, and transcript |
+| Meeting classifier | [`classifier.py` — `SYSTEM_PROMPT`](classifier.py#L9) | Assigns a category slug to each meeting based on title, participants, and transcript. Distinguishes between `advisors` (business mentorship and strategy) and `tools-research` (technical tool evaluation and product analysis) based on conversation context. |
 | Novel insights | [`analyzer.py` — `PROMPT_NOVEL`](analyzer.py#L46) | Queries NotebookLM for insights from the newest interview that never appeared before |
 | Aggregate patterns | [`analyzer.py` — `PROMPT_PATTERNS`](analyzer.py#L19) | Used by the weekly report — cross-meeting pattern analysis |
 

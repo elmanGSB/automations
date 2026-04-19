@@ -62,7 +62,8 @@ The classifier assigns each meeting to a category. Each category gets its own No
 | `investor-calls` | VCs, angels, fundraising |
 | `team-syncs` | Internal standups, retrospectives |
 | `competitors` | Competitive research calls |
-| `advisors` | Advisor and mentor meetings |
+| `advisors` | Advisor and mentor meetings (business mentorship, strategy, growth guidance) |
+| `tools-research` | Technical tool evaluation, workflow automation research, software product evaluations |
 
 **Stanford GSB classes (Q3 2026):**
 | Slug | Course |
