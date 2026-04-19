@@ -191,6 +191,27 @@ def run_digest_endpoint() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Fireflies utilities
+# ---------------------------------------------------------------------------
+
+@app.get("/api/meetings/generic", dependencies=[Depends(require_auth)])
+async def list_generic_meetings(limit: int = 100) -> dict[str, Any]:
+    """List meetings with generic/auto-generated names for cleanup."""
+    if not FIREFLIES_API_KEY:
+        raise HTTPException(status_code=500, detail="FIREFLIES_API_KEY not configured")
+
+    client = FirefliesClient(FIREFLIES_API_KEY)
+    try:
+        meetings = await client.list_generic_meetings(limit=limit)
+        return {"status": "ok", "count": len(meetings), "meetings": meetings[:20]}
+    except Exception as e:
+        logger.exception("Failed to list generic meetings")
+        raise HTTPException(status_code=500, detail=f"Fireflies API error: {str(e)}")
+    finally:
+        await client.aclose()
+
+
+# ---------------------------------------------------------------------------
 # Leads (migrated from leads_service.py)
 # ---------------------------------------------------------------------------
 
