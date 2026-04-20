@@ -26,26 +26,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy to VM
+      - name: Setup SSH key
         run: |
-          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
-          gcloud config set project paperclip-tribuai
-          gcloud compute scp . paperclip-vm:/home/elmanamador/automations/ --zone=us-central1-f --recurse
-          gcloud compute ssh paperclip-vm --zone=us-central1-f -- 'cd /home/elmanamador/automations && git pull origin main && python3 -m pip install -r requirements.txt && sudo systemctl restart vm-api'
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Run database migrations
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'cd /home/elmanamador/automations && \
+             for sql in discovery/*.sql; do \
+               echo "Running migration: $sql"; \
+               PGPASSWORD=paperclip psql -h 127.0.0.1 -U paperclip -d discovery -f "$sql" 2>&1 | tail -3; \
+             done'
+
+      - name: Deploy code
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'cd /home/elmanamador/automations && \
+             git pull origin main && \
+             python3 -m pip install -r requirements.txt && \
+             sudo systemctl restart vm-api'
 
       - name: Health check
         run: |
           sleep 5
           for i in {1..10}; do
-            if curl -sf http://34.61.120.233:3101/health; then
-              echo "VM API healthy"
+            if curl -sf http://${{ secrets.DEPLOY_HOST }}:3101/health; then
+              echo "✓ VM API healthy"
               exit 0
             fi
+            echo "Attempt $i/10 — waiting for service..."
             sleep 3
           done
+          echo "✗ Health check failed"
           exit 1
 
       - name: Rollback on failure
         if: failure()
         run: |
-          gcloud compute ssh paperclip-vm --zone=us-central1-f -- 'cd /home/elmanamador/automations && git revert HEAD --no-edit && sudo systemctl restart vm-api'
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'cd /home/elmanamador/automations && \
+             git revert HEAD --no-edit && \
+             sudo systemctl restart vm-api'
