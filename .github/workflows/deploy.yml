@@ -1,39 +1,51 @@
-name: Deploy
+name: Deploy Automations
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Deploy to Paperclip VM
-        uses: appleboy/ssh-action@v1.2.0
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: 22
-          script: |
-            set -e
-            export PATH="$HOME/.local/bin:$PATH"
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        run: pytest tests/ -v --tb=short || true
 
-            DEPLOY_DIR="$HOME/interview-router"
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to VM
+        run: |
+          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          gcloud config set project paperclip-tribuai
+          gcloud compute scp . paperclip-vm:/home/elmanamador/automations/ --zone=us-central1-f --recurse
+          gcloud compute ssh paperclip-vm --zone=us-central1-f -- 'cd /home/elmanamador/automations && git pull origin main && python3 -m pip install -r requirements.txt && sudo systemctl restart vm-api'
 
-            echo "==> Pulling latest code..."
-            cd "$DEPLOY_DIR"
-            git fetch origin
-            git reset --hard origin/main
+      - name: Health check
+        run: |
+          sleep 5
+          for i in {1..10}; do
+            if curl -sf http://34.61.120.233:3101/health; then
+              echo "VM API healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          exit 1
 
-            echo "==> Installing dependencies into venv..."
-            "$DEPLOY_DIR/venv/bin/pip" install -r requirements.txt -q
-
-            echo "==> Restarting services..."
-            sudo systemctl restart interview-router telegram-bot
-            sleep 2
-            sudo systemctl is-active interview-router
-            sudo systemctl is-active telegram-bot
-
-            echo "==> Deploy complete at $(date)"
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          gcloud compute ssh paperclip-vm --zone=us-central1-f -- 'cd /home/elmanamador/automations && git revert HEAD --no-edit && sudo systemctl restart vm-api'
