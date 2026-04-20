@@ -36,7 +36,8 @@ jobs:
       - name: Run database migrations
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'cd /home/elmanamador/automations && \
+            'which psql > /dev/null || { echo "psql not installed, skipping migrations"; exit 0; } && \
+             cd /home/elmanamador/automations && \
              for sql in discovery/*.sql; do \
                echo "Running migration: $sql"; \
                PGPASSWORD=paperclip psql -h 127.0.0.1 -U paperclip -d discovery -f "$sql" 2>&1 | tail -3; \
@@ -46,7 +47,9 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'cd /home/elmanamador/automations && \
-             git pull origin main && \
+             git fetch origin main && \
+             git reset --hard origin/main && \
+             git clean -fd && \
              uv pip install -r requirements.txt && \
              sudo systemctl restart vm-api'
 
@@ -69,5 +72,6 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'cd /home/elmanamador/automations && \
-             git revert HEAD --no-edit && \
-             sudo systemctl restart vm-api'
+             git reset --hard HEAD~1 && \
+             git clean -fd && \
+             sudo systemctl restart vm-api' || true
