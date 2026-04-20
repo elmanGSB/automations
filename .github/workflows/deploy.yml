@@ -47,7 +47,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'cd /home/elmanamador/automations && \
              git pull origin main && \
-             python3 -m pip install -r requirements.txt && \
+             uv pip install -r requirements.txt && \
              sudo systemctl restart vm-api'
 
       - name: Health check
