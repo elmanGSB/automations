@@ -1,10 +1,4 @@
-"""
-Fireflies GraphQL client — fetches full transcript by meeting ID.
-Copied from ~/interview-router/fireflies.py on Paperclip VM.
-"""
-
 from dataclasses import dataclass
-
 import httpx
 
 FIREFLIES_GRAPHQL_URL = "https://api.fireflies.ai/graphql"
@@ -34,15 +28,13 @@ query GetTranscript($id: String!) {
 """
 
 UPDATE_MEETING_TITLE_MUTATION = """
-mutation UpdateMeetingTitle($input: UpdateMeetingTitleInput!) {
-  updateMeetingTitle(input: $input) {
+mutation UpdateMeetingTitle($id: String!, $title: String!) {
+  updateTranscript(id: $id, title: $title) {
     id
     title
   }
 }
 """
-
-
 
 @dataclass
 class Sentence:
@@ -51,7 +43,6 @@ class Sentence:
     text: str
     start_time: float
     end_time: float
-
 
 @dataclass
 class Transcript:
@@ -64,7 +55,6 @@ class Transcript:
     summary_overview: str
     summary_action_items: list[str]
     summary_keywords: list[str]
-
 
 class FirefliesClient:
     def __init__(self, api_key: str):
@@ -86,9 +76,11 @@ class FirefliesClient:
             msg = errors[0].get("message", "Unknown GraphQL error") if errors else "Unknown GraphQL error"
             raise RuntimeError(f"Fireflies API error: {msg}")
         data = payload.get("data", {})
+
         transcript_data = data.get("transcript")
         if transcript_data is None:
             raise RuntimeError(f"Transcript not found: {transcript_id}")
+
         summary = transcript_data.get("summary") or {}
         return Transcript(
             id=transcript_data["id"],
@@ -111,11 +103,11 @@ class FirefliesClient:
             summary_keywords=summary.get("keywords") or [],
         )
 
-    async def update_meeting_title(self, meeting_id: str, title: str) -> str:
+    async def update_meeting_title(self, meeting_id: str, new_title: str) -> str:
         """Update a meeting's title. Returns the new title."""
         response = await self._client.post(
             FIREFLIES_GRAPHQL_URL,
-            json={"query": UPDATE_MEETING_TITLE_MUTATION, "variables": {"input": {"id": meeting_id, "title": title}}},
+            json={"query": UPDATE_MEETING_TITLE_MUTATION, "variables": {"id": meeting_id, "title": new_title}},
         )
         response.raise_for_status()
         payload = response.json()
@@ -124,11 +116,8 @@ class FirefliesClient:
             msg = errors[0].get("message", "Unknown GraphQL error") if errors else "Unknown GraphQL error"
             raise RuntimeError(f"Fireflies API error: {msg}")
         data = payload.get("data", {})
-        update_data = data.get("updateMeetingTitle")
-        if update_data is None:
-            raise RuntimeError(f"Failed to update meeting: {meeting_id}")
-        return update_data.get("title") or ""
-
+        updated = data.get("updateTranscript", {})
+        return updated.get("title", new_title)
 
     async def aclose(self) -> None:
         await self._client.aclose()

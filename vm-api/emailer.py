@@ -1,7 +1,8 @@
 import httpx
 import logging
 import markdown as md
-from config import AGENTMAIL_API_KEY
+
+AGENTMAIL_API_KEY = "am_us_c3b97b3755fd41dcb848e2eef208f653bae75fb42ccb95aa5aa9762c02bd0e82"
 AGENTMAIL_INBOX = "customer_discovery@agentmail.to"
 AGENTMAIL_BASE_URL = "https://api.agentmail.to/v0"
 RECIPIENTS = ["elman@stanford.edu", "kklara@stanford.edu"]

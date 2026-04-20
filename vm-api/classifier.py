@@ -19,8 +19,7 @@ Known categories:
 - investor-calls: Meetings with investors, VCs, angels, fundraising conversations
 - team-syncs: Internal team meetings, standups, retrospectives, planning sessions
 - competitors: Competitive analysis calls, conversations about or with competitors
-- advisors: Advisor meetings, mentor conversations, board advisor check-ins. Focus: business strategy, growth guidance, mentorship. When in doubt between advisors and tools-research: advisors discuss business decisions and strategy; tools-research discusses software functionality and evaluation.
-- tools-research: Technical tool evaluation, workflow automation research, software product evaluations, technical demos of automation platforms. Examples: evaluating Windmill vs other automation tools, testing NotebookLM CLI features, comparing AI automation platforms. When in doubt: tools-research focuses on HOW software works; advisors focuses on BUSINESS implications.
+- advisors: Advisor meetings, mentor conversations, board advisor check-ins
 
 Stanford GSB classes (use the specific slug, not a generic one):
 - class-mge: Managing Growing Enterprises

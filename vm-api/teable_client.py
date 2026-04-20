@@ -2,21 +2,19 @@
 Teable API client for dual-write from the discovery pipeline.
 Writes records to Teable tables after Postgres inserts so data
 appears in both the source-of-truth DB and the Teable UI.
-
-Credentials are read from environment variables:
-  TEABLE_EMAIL, TEABLE_PASSWORD
 """
 
 import json
 import logging
 import http.cookiejar
-import os
 import urllib.request
 import urllib.error
 
 logger = logging.getLogger(__name__)
 
 TEABLE_BASE_URL = "http://127.0.0.1:3200"
+TEABLE_EMAIL = "elmanamador52@hotmail.com"
+TEABLE_PASSWORD = "123eamGG!"
 
 # Teable table IDs (from the "Interviews DB" base)
 INTERVIEWS_TABLE = "tblINxPc5QnvO3vqogw"
@@ -29,8 +27,6 @@ class TeableClient:
 
     def __init__(self, base_url: str = TEABLE_BASE_URL):
         self.base_url = base_url
-        self._email = os.environ.get("TEABLE_EMAIL", "")
-        self._password = os.environ.get("TEABLE_PASSWORD", "")
         self._cj = http.cookiejar.CookieJar()
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self._cj)
@@ -50,8 +46,8 @@ class TeableClient:
         if self._authenticated:
             return
         self._request("POST", "/api/auth/signin", {
-            "email": self._email,
-            "password": self._password,
+            "email": TEABLE_EMAIL,
+            "password": TEABLE_PASSWORD,
         })
         self._authenticated = True
 
@@ -59,6 +55,8 @@ class TeableClient:
         """Insert records into a Teable table. Returns count created."""
         self.login()
         created = 0
+        # Teable API requires {"records": [{"fields": {...}}, ...]}
+        # Max batch size ~100, we use 10 for safety
         for i in range(0, len(records), 10):
             batch = [{"fields": r} for r in records[i:i + 10]]
             try:
@@ -68,6 +66,7 @@ class TeableClient:
                 created += len(result.get("records", []))
             except urllib.error.HTTPError as e:
                 logger.warning("Teable batch insert failed: %s", e)
+                # Fall back to one-at-a-time
                 for rec in batch:
                     try:
                         self._request("POST", f"/api/table/{table_id}/record", {
@@ -97,6 +96,7 @@ class TeableClient:
         }])
 
     def write_insights(self, insights: list[dict]) -> int:
+        """Write multiple insights. Each dict has: interview, type, category, content, severity, sentiment, quote."""
         records = [{
             "Interview": ins.get("interview", ""),
             "Type": ins.get("type", ""),
@@ -109,6 +109,7 @@ class TeableClient:
         return self.create_records(INSIGHTS_TABLE, records)
 
     def write_clusters(self, clusters: list[dict]) -> int:
+        """Write multiple clusters. Each dict has: user_type, need, insight, quote, category."""
         records = [{
             "User Type": cl.get("user_type", ""),
             "Need": cl.get("need", ""),

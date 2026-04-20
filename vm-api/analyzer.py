@@ -81,11 +81,13 @@ class NovelResult:
 
 def query_notebook(notebook_id: str, prompt: str, timeout: float = 180) -> str:
     """Run a prompt against a NotebookLM notebook via nlm CLI. Returns clean answer text."""
+    env = os.environ.copy()
+    env["DISPLAY"] = ":99"
     result = subprocess.run(
         ["nlm", "notebook", "query", notebook_id, prompt, "--timeout", str(timeout)],
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": "/home/elmanamador/.local/bin:/usr/local/bin:/usr/bin:/bin"},
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(f"nlm query failed: {result.stderr.strip()}")
