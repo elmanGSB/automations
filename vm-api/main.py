@@ -29,7 +29,7 @@ import asyncpg
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from analyzer import analyze_patterns
 from config import NLM_ENABLED_CATEGORIES
@@ -204,6 +204,7 @@ class LeadCreate(BaseModel):
 
 class LeadPatch(BaseModel):
     pillar: str
+    custom_focus: str | None = Field(None, max_length=2000)
 
 
 @app.post("/api/leads", status_code=201)
@@ -225,10 +226,18 @@ async def create_lead(body: LeadCreate):
 
 @app.patch("/api/leads/{lead_id}", status_code=200)
 async def update_lead_pillar(lead_id: int, body: LeadPatch):
+    # exclude_unset: only update fields the client actually sent
+    # prevents writing NULL to custom_focus for non-custom pillar selections
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=422, detail="No fields provided to update")
+
+    set_parts = [f"{col} = ${i + 1}" for i, col in enumerate(updates)]
+    params = list(updates.values()) + [lead_id]
+
     result = await pool.execute(
-        "UPDATE discovery.leads SET pillar = $1 WHERE id = $2",
-        body.pillar,
-        lead_id,
+        f"UPDATE discovery.leads SET {', '.join(set_parts)} WHERE id = ${len(params)}",
+        *params,
     )
     if result == "UPDATE 0":
         raise HTTPException(status_code=404, detail="Lead not found")
