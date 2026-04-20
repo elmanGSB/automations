@@ -50,6 +50,10 @@ jobs:
              git fetch origin main && \
              git reset --hard origin/main && \
              git clean -fd && \
+             rm -f .gitmodules && \
+             git config --remove-section submodule.discovery 2>/dev/null || true && \
+             python3 -m pip install --user uv 2>/dev/null || true && \
+             export PATH=$PATH:~/.local/bin && \
              uv pip install -r requirements.txt && \
              sudo systemctl restart vm-api'
 
