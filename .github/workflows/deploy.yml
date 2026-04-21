@@ -33,25 +33,35 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
+      - name: Copy code to VM
+        run: |
+          scp -i ~/.ssh/deploy_key -r -C \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            . ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations-new
+
       - name: Run database migrations
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'which psql > /dev/null || { echo "psql not installed, skipping migrations"; exit 0; } && \
-             cd /home/elmanamador/automations && \
+             cd /home/elmanamador/automations-new && \
              for sql in discovery/*.sql; do \
                echo "Running migration: $sql"; \
                PGPASSWORD=paperclip psql -h 127.0.0.1 -U paperclip -d discovery -f "$sql" 2>&1 | tail -3; \
              done'
 
-      - name: Deploy code
+      - name: Swap deployment
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'cd /home/elmanamador && \
+             [ -d automations-old ] && rm -rf automations-old; \
+             [ -d automations ] && mv automations automations-old; \
+             mv automations-new automations'
+
+      - name: Install dependencies and restart
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'cd /home/elmanamador/automations && \
-             git fetch origin main && \
-             git reset --hard origin/main && \
-             git clean -fd && \
-             rm -f .gitmodules && \
-             git config --remove-section submodule.discovery 2>/dev/null || true && \
              if command -v uv &> /dev/null; then uv pip install -r requirements.txt; else pip3 install --break-system-packages -q -r requirements.txt; fi && \
              sudo systemctl restart vm-api'
 
@@ -73,7 +83,9 @@ jobs:
         if: failure()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'cd /home/elmanamador/automations && \
-             git reset --hard HEAD~1 && \
-             git clean -fd && \
-             sudo systemctl restart vm-api' || true
+            'cd /home/elmanamador && \
+             [ -d automations-old ] && \
+             { mv automations automations-new 2>/dev/null || true; \
+               mv automations-old automations; \
+               cd automations && \
+               sudo systemctl restart vm-api; } || true'
