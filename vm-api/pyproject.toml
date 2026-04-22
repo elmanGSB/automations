@@ -21,5 +21,27 @@ dev = [
     "httpx>=0.27",
 ]
 
+# Flat-layout package: declare top-level modules so setuptools doesn't
+# try (and fail) auto-discovery on the multiple .py files at this root.
+[tool.setuptools]
+py-modules = [
+    "main",
+    "config",
+    "fireflies",
+    "classifier",
+    "analyzer",
+    "pipeline_runner",
+    "notebooklm",
+    "notifier",
+    "emailer",
+    "speaker_roles",
+    "transcript_formatter",
+    "pdf_generator",
+    "state",
+    "hindsight",
+    "teable_client",
+    "discovery_extractor",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
