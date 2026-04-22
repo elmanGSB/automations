@@ -61,6 +61,8 @@ class FirefliesClient:
         self._headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Cloudflare in front of api.fireflies.ai blocks the default python-httpx UA (403)
+            "User-Agent": "broccoli-ai-automations/1.0 (+https://jumpersapp.com)",
         }
         self._client = httpx.AsyncClient(headers=self._headers, timeout=30.0)
 
