@@ -25,14 +25,9 @@ jobs:
           VM_API_SECRET: ci-dummy-vm-secret
           TELEGRAM_BOT_TOKEN: ci-dummy-token
           TELEGRAM_CHAT_ID: "000000"
-        # Same deselects as ci.yml — pre-existing test bugs, separate follow-up.
+        # Same deselects as ci.yml — test_classifier needs live BAML proxy.
         run: |
           pytest tests/ -v --tb=short \
-            --deselect tests/test_state.py::test_concurrent_mark_processed_no_data_loss \
-            --deselect tests/test_state.py::test_mark_processed_caps_at_500 \
-            --deselect tests/test_state.py::test_concurrent_mark_nlm_no_data_loss \
-            --deselect tests/test_state.py::test_save_notebook_id_concurrent_no_data_loss \
-            --deselect tests/test_state.py::test_get_or_create_concurrent_same_category_one_wins \
             --deselect tests/test_classifier.py::test_tools_research_classification \
             --deselect tests/test_classifier.py::test_advisor_vs_tools_research_disambiguation
 
@@ -58,13 +53,12 @@ jobs:
             --exclude '__pycache__/' \
             --exclude '.pytest_cache/' \
             --exclude '.ruff_cache/' \
-            --exclude 'vm-api/state.json' \
-            --exclude 'vm-api/state.json.lock' \
+            --exclude 'vm-api/state.json*' \
             --exclude 'vm-api/*.tmp' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations/
 
-      - name: One-time legacy runtime-state migration
+      - name: One-time legacy .env migration
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'set -e; \
@@ -79,12 +73,6 @@ jobs:
                  echo "FATAL: no .env at $ENV_DEST or $ENV_LEGACY — vm-api would start without secrets"; \
                  exit 1; \
                fi; \
-             fi; \
-             STATE_DEST=/home/elmanamador/automations/vm-api/state.json; \
-             STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
-             if [ ! -f "$STATE_DEST" ] && [ -f "$STATE_LEGACY" ]; then \
-               echo "One-time migration: $STATE_LEGACY -> $STATE_DEST"; \
-               cp -a "$STATE_LEGACY" "$STATE_DEST"; \
              fi'
 
       - name: Run database migrations
@@ -135,10 +123,78 @@ jobs:
              .venv/bin/pip install --quiet --upgrade pip && \
              .venv/bin/pip install --quiet -r /home/elmanamador/automations/requirements.txt'
 
-      - name: Restart vm-api
+      - name: Cutover — stop, migrate state, start
+        # Everything that compares mutable state happens AFTER systemctl
+        # stop, so no writer (legacy or canonical) can race the check.
+        # Preflight only validates JSON parsability of source files —
+        # those validations are stable and OK to do while vm-api runs.
+        #
+        # Divergence guard runs post-stop: if we're trusting an existing
+        # canonical (didn't migrate), legacy MUST match dest byte-for-byte
+        # at the stopped-state snapshot. Otherwise refuse to retire and
+        # let the trap restart the service. After this deploy, legacy is
+        # renamed to .retired.<ts> so future deploys never see it.
+        #
+        # A trap on EXIT restarts vm-api on any failure after the stop,
+        # so production is never left down.
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'sudo systemctl restart vm-api'
+            'set -e; \
+             STATE_DEST=/home/elmanamador/automations/vm-api/state.json; \
+             STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
+             NEED_DISCARD_CORRUPT=0; \
+             NEED_MIGRATE=0; \
+             # --- Preflight (service still running): JSON parse only, no comparisons --- \
+             if [ -f "$STATE_DEST" ]; then \
+               if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_DEST" 2>/dev/null; then \
+                 echo "WARN: $STATE_DEST exists but does not parse as JSON — will discard and re-migrate"; \
+                 NEED_DISCARD_CORRUPT=1; \
+               fi; \
+             fi; \
+             if [ "$NEED_DISCARD_CORRUPT" = "1" ] || [ ! -f "$STATE_DEST" ]; then \
+               if [ -f "$STATE_LEGACY" ]; then \
+                 python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_LEGACY" \
+                   || { echo "FATAL: legacy state.json does not parse — refusing to migrate"; exit 1; }; \
+                 NEED_MIGRATE=1; \
+               fi; \
+             fi; \
+             # --- Stop window: comparisons + mutations happen here, no writers can race --- \
+             trap "sudo systemctl start vm-api 2>/dev/null || true" EXIT; \
+             sudo systemctl stop vm-api; \
+             if [ "$NEED_DISCARD_CORRUPT" = "1" ]; then \
+               mv "$STATE_DEST" "${STATE_DEST}.corrupt.$(date +%s)"; \
+             fi; \
+             if [ "$NEED_MIGRATE" = "1" ]; then \
+               echo "Snapshotting + migrating $STATE_LEGACY -> $STATE_DEST (service stopped)"; \
+               cp -a "$STATE_LEGACY" "${STATE_DEST}.tmp"; \
+               python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${STATE_DEST}.tmp" \
+                 || { echo "FATAL: post-cp .tmp does not parse"; rm -f "${STATE_DEST}.tmp"; exit 1; }; \
+               mv "${STATE_DEST}.tmp" "$STATE_DEST"; \
+             fi; \
+             # Post-stop divergence guard: only matters when we trusted an existing dest \
+             # (NEED_MIGRATE=0). After migration, dest is a fresh copy of legacy and they \
+             # match by construction. Catches the case where the OLD unit was writing to \
+             # legacy in the window between preflight and stop. \
+             if [ "$NEED_MIGRATE" = "0" ] && [ -f "$STATE_DEST" ] && [ -f "$STATE_LEGACY" ]; then \
+               if ! cmp -s "$STATE_DEST" "$STATE_LEGACY"; then \
+                 echo "FATAL: post-stop $STATE_DEST and $STATE_LEGACY differ; refusing to retire legacy."; \
+                 echo "       Inspect both files. After deciding which has the newer data:"; \
+                 echo "         1. Reconcile manually (e.g. union _processed and _nlm_uploaded into $STATE_DEST)"; \
+                 echo "         2. mv $STATE_LEGACY ${STATE_LEGACY}.retired.\$(date +%s)"; \
+                 echo "         3. Re-run deploy"; \
+                 exit 1; \
+               fi; \
+               echo "INFO: post-stop $STATE_LEGACY matches $STATE_DEST"; \
+             fi; \
+             # One-shot retirement: after this deploy, legacy is gone and the divergence \
+             # guard above can never trip on subsequent deploys. \
+             if [ -f "$STATE_LEGACY" ]; then \
+               RETIRED="${STATE_LEGACY}.retired.$(date +%s)"; \
+               echo "Retiring $STATE_LEGACY -> $RETIRED"; \
+               mv "$STATE_LEGACY" "$RETIRED"; \
+             fi; \
+             sudo systemctl start vm-api; \
+             trap - EXIT'
 
       - name: Health check
         run: |
