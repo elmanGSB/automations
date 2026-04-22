@@ -1,5 +1,6 @@
 summary: "VM health check — every 30 minutes"
+path: "f/automations/health_check"
+schedule: "*/30 * * * *"
 timezone: UTC
-cron: "*/30 * * * *"
 args: {}
 enabled: true
