@@ -89,15 +89,23 @@ jobs:
 
       - name: Assert FIREFLIES_API_KEY present in VM .env
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'set -e; \
-             ENV=/home/elmanamador/automations/vm-api/.env; \
-             VAL=$(grep -E "^FIREFLIES_API_KEY=" "$ENV" | head -1 | cut -d= -f2-); \
-             if [ -z "$VAL" ]; then \
-               echo "FATAL: FIREFLIES_API_KEY is missing or empty in $ENV — every Fireflies webhook would 503"; \
-               exit 1; \
-             fi; \
-             echo "FIREFLIES_API_KEY present."'
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} bash -s <<'REMOTE'
+          set -e
+          ENV=/home/elmanamador/automations/vm-api/.env
+          RAW=$(grep -E '^FIREFLIES_API_KEY=' "$ENV" | head -1 | cut -d= -f2-)
+          # Mirror python-dotenv semantics: strip surrounding whitespace,
+          # then strip a single pair of surrounding quotes ("" or '').
+          VAL=$(printf '%s' "$RAW" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+          if [[ "$VAL" =~ ^\"(.*)\"$ ]] || [[ "$VAL" =~ ^\'(.*)\'$ ]]; then
+            VAL="${BASH_REMATCH[1]}"
+          fi
+          if [ -z "$VAL" ]; then
+            echo "FATAL: FIREFLIES_API_KEY is missing, empty, or quoted-empty in $ENV — every Fireflies webhook would 503"
+            echo "Raw line was: '$RAW'"
+            exit 1
+          fi
+          echo "FIREFLIES_API_KEY present (non-empty after dotenv-style parsing)."
+          REMOTE
 
       - name: Upsert Telegram credentials into VM .env
         env:
