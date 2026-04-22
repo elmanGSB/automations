@@ -33,50 +33,44 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Copy code to VM
+      - name: Rsync code to VM
         run: |
-          scp -i ~/.ssh/deploy_key -r -C \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            . ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations-new
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude '.venv/' \
+            --exclude '.git/' \
+            --exclude '__pycache__/' \
+            --exclude '.pytest_cache/' \
+            --exclude '.ruff_cache/' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations/
+
+      - name: One-time legacy .env migration
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             DEST=/home/elmanamador/automations/vm-api/.env; \
+             LEGACY=/home/elmanamador/vm-api/.env; \
+             if [ ! -f "$DEST" ]; then \
+               if [ -f "$LEGACY" ]; then \
+                 echo "One-time migration: $LEGACY -> $DEST"; \
+                 cp "$LEGACY" "$DEST"; \
+                 chmod 600 "$DEST"; \
+               else \
+                 echo "FATAL: no .env at $DEST or $LEGACY — vm-api would start without secrets"; \
+                 exit 1; \
+               fi; \
+             fi'
 
       - name: Run database migrations
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'which psql > /dev/null || { echo "psql not installed, skipping migrations"; exit 0; } && \
-             cd /home/elmanamador/automations-new && \
+             cd /home/elmanamador/automations && \
              for sql in discovery/*.sql; do \
                echo "Running migration: $sql"; \
                PGPASSWORD=paperclip psql -h 127.0.0.1 -U paperclip -d discovery -f "$sql" 2>&1 | tail -3; \
              done'
-
-      - name: Swap deployment
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'cd /home/elmanamador && \
-             [ -d automations-old ] && rm -rf automations-old; \
-             [ -d automations ] && mv automations automations-old; \
-             mv automations-new automations'
-
-      - name: Bootstrap stable env file location
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'set -e; \
-             STABLE=/home/elmanamador/vm-api-env/.env; \
-             LEGACY=/home/elmanamador/vm-api/.env; \
-             mkdir -p /home/elmanamador/vm-api-env; \
-             if [ ! -f "$STABLE" ]; then \
-               if [ -f "$LEGACY" ]; then \
-                 echo "Bootstrapping $STABLE from $LEGACY (one-time)"; \
-                 cp "$LEGACY" "$STABLE"; \
-                 chmod 600 "$STABLE"; \
-               else \
-                 echo "FATAL: no .env at $STABLE or $LEGACY — vm-api would start without secrets"; \
-                 exit 1; \
-               fi; \
-             else \
-               echo "$STABLE already present — deploy does not touch it"; \
-             fi'
 
       - name: Install systemd unit from repo
         run: |
@@ -85,18 +79,17 @@ jobs:
              UNIT=/etc/systemd/system/vm-api.service; \
              SRC=/home/elmanamador/automations/infra/systemd/vm-api.service; \
              if [ ! -f "$SRC" ]; then echo "FATAL: $SRC missing"; exit 1; fi; \
-             sudo cp "$UNIT" "${UNIT}.bak.$(date +%s)" 2>/dev/null || true; \
              sudo install -m 644 "$SRC" "$UNIT"; \
              sudo rm -f /etc/systemd/system/vm-api.service.d/nlm-path.conf; \
              sudo systemctl daemon-reload'
 
-      - name: Assert systemd unit points at new runtime
+      - name: Assert systemd unit points at canonical runtime
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'set -e; \
              EXPECTED_WD=/home/elmanamador/automations/vm-api; \
              EXPECTED_EXEC=/home/elmanamador/automations/vm-api/.venv/bin/uvicorn; \
-             EXPECTED_ENV=/home/elmanamador/vm-api-env/.env; \
+             EXPECTED_ENV=/home/elmanamador/automations/vm-api/.env; \
              WD=$(systemctl show vm-api.service -p WorkingDirectory --value); \
              EXEC=$(systemctl show vm-api.service -p ExecStart --value); \
              ENV_FILES=$(systemctl show vm-api.service -p EnvironmentFiles --value); \
@@ -135,14 +128,3 @@ jobs:
           done
           echo "✗ Health check failed"
           exit 1
-
-      - name: Rollback on failure
-        if: failure()
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'cd /home/elmanamador && \
-             [ -d automations-old ] && \
-             { mv automations automations-new 2>/dev/null || true; \
-               mv automations-old automations; \
-               cd automations && \
-               sudo systemctl restart vm-api; } || true'

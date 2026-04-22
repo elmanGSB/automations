@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=elmanamador
 WorkingDirectory=/home/elmanamador/automations/vm-api
-EnvironmentFile=/home/elmanamador/vm-api-env/.env
+EnvironmentFile=/home/elmanamador/automations/vm-api/.env
 Environment=DISPLAY=:99
 Environment=PATH=/home/elmanamador/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/home/elmanamador/automations/vm-api/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 3101
