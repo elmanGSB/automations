@@ -123,27 +123,38 @@ def mark_meeting_processed(meeting_id: str) -> None:
 def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
     """Get existing notebook ID or create and return it.
 
-    Returns (notebook_id, is_new) where is_new=True iff this call
-    observed the category as missing AND called create_fn. Concurrent
-    calls for the same missing category serialize on the state lock,
-    so exactly one caller sees is_new=True and all callers return the
-    same persisted id.
+    Returns (notebook_id, is_new) where is_new=True iff this call's
+    candidate id won the CAS. All callers return the same persisted id.
+
+    create_fn runs OUTSIDE the state lock — it may be a slow external
+    subprocess (NotebookLM CLI, 120s timeout), and holding the state
+    lock across it would freeze unrelated state writes (_processed /
+    _nlm_uploaded markers for other meetings).
+
+    Tradeoff: if two callers race the first-create for the same
+    category (rare — new categories are weekly at most), both call
+    create_fn(); only one wins the CAS. The loser's notebook is
+    orphaned (created externally but never referenced). Cosmetic cost
+    vs. global stall on every other state write.
     """
     existing = get_notebook_id(category)
     if existing:
         return (existing, False)
 
+    # Slow external work happens here, WITHOUT the state lock.
+    candidate_id = create_fn()
+
     result: dict = {}
 
     def _mutate(data: dict) -> None:
-        # Re-check under the lock — another caller may have created it.
         if category in data:
+            # Lost the race. Our candidate is orphaned (already
+            # externally created but unreferenced).
             result["id"] = data[category]
             result["is_new"] = False
             return
-        notebook_id = create_fn()
-        data[category] = notebook_id
-        result["id"] = notebook_id
+        data[category] = candidate_id
+        result["id"] = candidate_id
         result["is_new"] = True
 
     _transact(_mutate)

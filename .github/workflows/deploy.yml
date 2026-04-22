@@ -135,9 +135,24 @@ jobs:
              sudo systemctl stop vm-api; \
              STATE_DEST=/home/elmanamador/automations/vm-api/state.json; \
              STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
+             # If a previous deploy was interrupted mid-cp, STATE_DEST may exist \
+             # but be truncated. Validate any pre-existing dest as JSON; if it \
+             # fails to parse, treat it as missing and re-migrate from legacy. \
+             if [ -f "$STATE_DEST" ]; then \
+               if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_DEST" 2>/dev/null; then \
+                 echo "WARN: $STATE_DEST exists but does not parse as JSON — discarding and re-migrating"; \
+                 mv "$STATE_DEST" "${STATE_DEST}.corrupt.$(date +%s)"; \
+               fi; \
+             fi; \
              if [ ! -f "$STATE_DEST" ] && [ -f "$STATE_LEGACY" ]; then \
                echo "One-time migration: $STATE_LEGACY -> $STATE_DEST (service stopped)"; \
-               cp -a "$STATE_LEGACY" "$STATE_DEST"; \
+               # Atomic: copy to .tmp sibling, validate, then rename. \
+               # An interrupted cp leaves only the .tmp; STATE_DEST stays absent \
+               # so the next deploy retries. \
+               cp -a "$STATE_LEGACY" "${STATE_DEST}.tmp"; \
+               python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${STATE_DEST}.tmp" \
+                 || { echo "FATAL: legacy state.json does not parse"; rm -f "${STATE_DEST}.tmp"; exit 1; }; \
+               mv "${STATE_DEST}.tmp" "$STATE_DEST"; \
              fi; \
              sudo systemctl start vm-api'
 
