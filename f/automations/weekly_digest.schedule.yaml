@@ -1,5 +1,6 @@
 summary: "Weekly digest — every Monday 9am UTC"
-path: "f/automations/weekly_digest"
+script_path: "f/automations/weekly_digest"
+is_flow: true
 schedule: "0 9 * * 1"
 timezone: UTC
 args: {}
