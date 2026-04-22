@@ -23,13 +23,19 @@ def create_notebook(title: str) -> str:
     return match.group(1)
 
 
-def add_pdf_source(notebook_id: str, pdf_path: str, title: str) -> None:
-    """Upload a PDF file as a source to a NotebookLM notebook."""
+def add_file_source(notebook_id: str, file_path: str, title: str) -> None:
+    """Upload a local file as a source to a NotebookLM notebook.
+
+    nlm source add accepts .pdf, .docx, .txt, .md, .csv, plus audio/video/image
+    formats — see notebooklm-mcp-cli's supported_extensions set. The pipeline
+    currently emits .docx (see docx_generator.py) but the function does not
+    inspect the extension, so callers can pass any nlm-supported file.
+    """
     try:
         result = subprocess.run(
             [
                 "nlm", "source", "add", notebook_id,
-                "--file", pdf_path,
+                "--file", file_path,
                 "--title", title,
                 "--wait",
             ],
@@ -38,7 +44,7 @@ def add_pdf_source(notebook_id: str, pdf_path: str, title: str) -> None:
             timeout=600,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"Timed out uploading PDF to notebook '{notebook_id}' after 600s")
+        raise RuntimeError(f"Timed out uploading file to notebook '{notebook_id}' after 600s")
     if result.returncode != 0:
         raise RuntimeError(
             f"Failed to add source to notebook '{notebook_id}': {result.stderr.strip()}"

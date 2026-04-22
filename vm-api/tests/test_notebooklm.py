@@ -42,34 +42,34 @@ def test_create_notebook_raises_on_nonzero_exit():
 
 
 # ---------------------------------------------------------------------------
-# add_pdf_source
+# add_file_source
 # ---------------------------------------------------------------------------
 
-def test_add_pdf_source_success():
-    """Successful add_pdf_source completes without raising."""
+def test_add_file_source_success():
+    """Successful add_file_source completes without raising."""
     mock_result = MagicMock()
     mock_result.returncode = 0
 
     with patch("notebooklm.subprocess.run", return_value=mock_result) as mock_run:
-        notebooklm.add_pdf_source("nb-123", "/tmp/test.pdf", "My Meeting")
+        notebooklm.add_file_source("nb-123", "/tmp/test.docx", "My Meeting")
 
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs["timeout"] == 600
 
 
-def test_add_pdf_source_raises_on_timeout():
-    """add_pdf_source raises RuntimeError when subprocess times out."""
+def test_add_file_source_raises_on_timeout():
+    """add_file_source raises RuntimeError when subprocess times out."""
     with patch("notebooklm.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="nlm", timeout=600)):
-        with pytest.raises(RuntimeError, match="Timed out uploading PDF"):
-            notebooklm.add_pdf_source("nb-123", "/tmp/test.pdf", "My Meeting")
+        with pytest.raises(RuntimeError, match="Timed out uploading file"):
+            notebooklm.add_file_source("nb-123", "/tmp/test.docx", "My Meeting")
 
 
-def test_add_pdf_source_raises_on_nonzero_exit():
-    """add_pdf_source raises RuntimeError on non-zero returncode."""
+def test_add_file_source_raises_on_nonzero_exit():
+    """add_file_source raises RuntimeError on non-zero returncode."""
     mock_result = MagicMock()
     mock_result.returncode = 1
     mock_result.stderr = "network error"
 
     with patch("notebooklm.subprocess.run", return_value=mock_result):
         with pytest.raises(RuntimeError, match="Failed to add source"):
-            notebooklm.add_pdf_source("nb-123", "/tmp/test.pdf", "My Meeting")
+            notebooklm.add_file_source("nb-123", "/tmp/test.docx", "My Meeting")

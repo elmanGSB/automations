@@ -20,12 +20,12 @@ from analyzer import analyze_novel
 from classifier import classify_meeting
 from config import FIREFLIES_API_KEY, INTERNAL_TEAM_NAMES, NLM_ENABLED_CATEGORIES
 from discovery_extractor import process_discovery_meeting
+from docx_generator import generate_transcript_docx
 from emailer import send_novel_report
 from fireflies import FirefliesClient
 from hindsight import retain_meeting, retain_novel_insights
-from notebooklm import add_pdf_source, create_notebook, notebook_title_for_category
+from notebooklm import add_file_source, create_notebook, notebook_title_for_category
 from notifier import notify_new_category
-from pdf_generator import generate_transcript_pdf
 from speaker_roles import classify_speakers
 from state import (
     get_or_create_notebook_id,
@@ -218,18 +218,18 @@ def _run_pipeline(
             result["steps"]["notebooklm_notebook"] = {"status": "error", "error": "notebook_failed"}
             return result
 
-        # Step 6: Generate PDF and upload to notebook (idempotent via _nlm_uploaded state)
+        # Step 6: Generate DOCX and upload to notebook (idempotent via _nlm_uploaded state)
         try:
             if is_nlm_uploaded(meeting_id):
-                logger.info("Meeting %s PDF already uploaded, skipping", meeting_id)
+                logger.info("Meeting %s transcript already uploaded, skipping", meeting_id)
                 result["steps"]["notebooklm_upload"] = {
                     "status": "skipped",
                     "reason": "already_uploaded",
                 }
             else:
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    pdf_path = generate_transcript_pdf(transcript, tmpdir, role_map=role_map)
-                    add_pdf_source(notebook_id, pdf_path, transcript.title)
+                    docx_path = generate_transcript_docx(transcript, tmpdir, role_map=role_map)
+                    add_file_source(notebook_id, docx_path, transcript.title)
                 mark_nlm_uploaded(meeting_id)
                 result["steps"]["notebooklm_upload"] = {"status": "ok"}
         except Exception:
