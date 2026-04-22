@@ -1,3 +1,6 @@
+import html
+import os
+
 import httpx
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
@@ -6,6 +9,32 @@ def _escape_md(text: str) -> str:
     """Escape special characters for Telegram MarkdownV2."""
     special = r'_*[]()~`>#+-=|{}.!'
     return "".join(f"\\{c}" if c in special else c for c in str(text))
+
+
+async def send_error(title: str, detail: str, **context: object) -> None:
+    """Post an error alert to Telegram.
+
+    Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID directly from os.environ
+    so a misconfigured VM fails loudly (KeyError) instead of silently no-op'ing.
+    HTTP errors are re-raised as RuntimeError without the original exception,
+    so the bot token embedded in the URL never reaches logs.
+    """
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    body = f"🔴 <b>{html.escape(title)}</b>\n\n{html.escape(detail)}"
+    if context:
+        ctx_lines = "\n".join(f"{k}: {v}" for k, v in context.items())
+        body += f"\n\n<code>{html.escape(ctx_lines)}</code>"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": body, "parse_mode": "HTML"},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"Telegram API {e.response.status_code}") from None
 
 
 async def notify_new_category(
