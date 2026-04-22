@@ -87,6 +87,36 @@ jobs:
                cp -a "$STATE_LEGACY" "$STATE_DEST"; \
              fi'
 
+      - name: Upsert Telegram credentials into VM .env
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "FATAL: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret is unset — alert channel would be silently broken"
+            exit 1
+          fi
+          echo "::add-mask::$TELEGRAM_BOT_TOKEN"
+          echo "::add-mask::$TELEGRAM_CHAT_ID"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "TELEGRAM_BOT_TOKEN='$TELEGRAM_BOT_TOKEN' TELEGRAM_CHAT_ID='$TELEGRAM_CHAT_ID' bash -s" <<'REMOTE'
+          set -e
+          ENV=/home/elmanamador/automations/vm-api/.env
+          upsert() {
+            local key="$1" val="$2"
+            if grep -q "^${key}=" "$ENV"; then
+              # Replace in-place. Use a delimiter unlikely to appear in tokens.
+              sudo sed -i "s|^${key}=.*|${key}=${val}|" "$ENV"
+            else
+              echo "${key}=${val}" | sudo tee -a "$ENV" >/dev/null
+            fi
+          }
+          upsert TELEGRAM_BOT_TOKEN "$TELEGRAM_BOT_TOKEN"
+          upsert TELEGRAM_CHAT_ID "$TELEGRAM_CHAT_ID"
+          sudo chmod 600 "$ENV"
+          echo "TELEGRAM_* upserted into $ENV"
+          REMOTE
+
       - name: Run database migrations
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
