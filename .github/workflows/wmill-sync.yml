@@ -36,9 +36,12 @@ jobs:
 
       - name: Push to Windmill
         if: steps.check.outputs.skip != 'true'
+        # --include-schedules is passed explicitly because the wmill CLI does not
+        # always honor the includeSchedules flag in wmill.yaml — without the flag,
+        # .schedule.yaml files are silently ignored even when present in includes.
         run: |
           npm install -g windmill-cli
-          wmill sync push --yes --skip-secrets \
+          wmill sync push --yes --skip-secrets --include-schedules \
             --workspace ${{ env.WMILL_WORKSPACE }} \
             --token ${{ secrets.WMILL_TOKEN }} \
             --base-url ${{ env.WMILL_URL }}
