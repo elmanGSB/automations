@@ -21,9 +21,18 @@ jobs:
 
       - name: Skip Windmill-originated commits
         id: check
+        # Pass the commit message via env, NOT inline expansion. Inline
+        # expansion of ${{ github.event.head_commit.message }} embeds the
+        # raw message into the shell script — multi-line messages and
+        # shell metacharacters (backticks, $(...), quotes) break parsing
+        # or execute as commands. With env: GitHub sets MSG as a real
+        # env var that bash reads safely as a string.
+        env:
+          MSG: ${{ github.event.head_commit.message }}
         run: |
-          MSG="${{ github.event.head_commit.message }}"
-          [[ "$MSG" =~ ^\[WM\] ]] && echo "skip=true" >> $GITHUB_OUTPUT || true
+          if [[ "$MSG" == \[WM\]* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Push to Windmill
         if: steps.check.outputs.skip != 'true'
