@@ -58,19 +58,55 @@ jobs:
              [ -d automations ] && mv automations automations-old; \
              mv automations-new automations'
 
-      - name: Preserve .env on first cutover
+      - name: Bootstrap stable env file location
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'set -e; \
-             NEW=/home/elmanamador/automations/vm-api/.env; \
-             OLD=/home/elmanamador/vm-api/.env; \
-             if [ ! -f "$NEW" ] && [ -f "$OLD" ]; then \
-               echo "Copying .env from legacy vm-api dir"; \
-               cp "$OLD" "$NEW"; \
-               chmod 600 "$NEW"; \
+             STABLE=/home/elmanamador/vm-api-env/.env; \
+             LEGACY=/home/elmanamador/vm-api/.env; \
+             mkdir -p /home/elmanamador/vm-api-env; \
+             if [ ! -f "$STABLE" ]; then \
+               if [ -f "$LEGACY" ]; then \
+                 echo "Bootstrapping $STABLE from $LEGACY (one-time)"; \
+                 cp "$LEGACY" "$STABLE"; \
+                 chmod 600 "$STABLE"; \
+               else \
+                 echo "FATAL: no .env at $STABLE or $LEGACY — vm-api would start without secrets"; \
+                 exit 1; \
+               fi; \
              else \
-               echo ".env already present at new location (or no legacy source)"; \
+               echo "$STABLE already present — deploy does not touch it"; \
              fi'
+
+      - name: Install systemd unit from repo
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             UNIT=/etc/systemd/system/vm-api.service; \
+             SRC=/home/elmanamador/automations/infra/systemd/vm-api.service; \
+             if [ ! -f "$SRC" ]; then echo "FATAL: $SRC missing"; exit 1; fi; \
+             sudo cp "$UNIT" "${UNIT}.bak.$(date +%s)" 2>/dev/null || true; \
+             sudo install -m 644 "$SRC" "$UNIT"; \
+             sudo rm -f /etc/systemd/system/vm-api.service.d/nlm-path.conf; \
+             sudo systemctl daemon-reload'
+
+      - name: Assert systemd unit points at new runtime
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             EXPECTED_WD=/home/elmanamador/automations/vm-api; \
+             EXPECTED_EXEC=/home/elmanamador/automations/vm-api/.venv/bin/uvicorn; \
+             EXPECTED_ENV=/home/elmanamador/vm-api-env/.env; \
+             WD=$(systemctl show vm-api.service -p WorkingDirectory --value); \
+             EXEC=$(systemctl show vm-api.service -p ExecStart --value); \
+             ENV_FILES=$(systemctl show vm-api.service -p EnvironmentFiles --value); \
+             echo "WorkingDirectory=$WD"; \
+             echo "ExecStart=$EXEC"; \
+             echo "EnvironmentFiles=$ENV_FILES"; \
+             echo "$WD" | grep -qx "$EXPECTED_WD" || { echo "FATAL: WorkingDirectory=$WD, expected $EXPECTED_WD"; exit 1; }; \
+             echo "$EXEC" | grep -q "$EXPECTED_EXEC" || { echo "FATAL: ExecStart does not reference $EXPECTED_EXEC"; exit 1; }; \
+             echo "$ENV_FILES" | grep -q "$EXPECTED_ENV" || { echo "FATAL: EnvironmentFiles does not reference $EXPECTED_ENV"; exit 1; }; \
+             echo "Unit configuration verified."'
 
       - name: Build vm-api venv and install dependencies
         run: |
@@ -79,8 +115,12 @@ jobs:
              cd /home/elmanamador/automations/vm-api && \
              if [ ! -d .venv ]; then python3 -m venv .venv; fi && \
              .venv/bin/pip install --quiet --upgrade pip && \
-             .venv/bin/pip install --quiet -r /home/elmanamador/automations/requirements.txt && \
-             sudo systemctl restart vm-api'
+             .venv/bin/pip install --quiet -r /home/elmanamador/automations/requirements.txt'
+
+      - name: Restart vm-api
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'sudo systemctl restart vm-api'
 
       - name: Health check
         run: |
