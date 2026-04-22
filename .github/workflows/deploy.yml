@@ -53,8 +53,7 @@ jobs:
             --exclude '__pycache__/' \
             --exclude '.pytest_cache/' \
             --exclude '.ruff_cache/' \
-            --exclude 'vm-api/state.json' \
-            --exclude 'vm-api/state.json.lock' \
+            --exclude 'vm-api/state.json*' \
             --exclude 'vm-api/*.tmp' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations/
@@ -125,11 +124,14 @@ jobs:
              .venv/bin/pip install --quiet -r /home/elmanamador/automations/requirements.txt'
 
       - name: Cutover — stop, migrate state, start
-        # All risky validation (parse legacy JSON, build & validate .tmp)
-        # happens BEFORE systemctl stop, so a migration error keeps the
-        # old service running. The stop window then contains only the
-        # cheap atomic mv + start. A trap restarts vm-api on any failure
-        # after the stop, so we can never leave production down.
+        # Preflight only VALIDATES that source files will parse — the
+        # actual cp from $STATE_LEGACY happens AFTER systemctl stop, so
+        # no webhook can mutate legacy state between the snapshot and
+        # the promotion. (Pre-stop cp would silently drop any updates
+        # arriving in the window between cp and stop.)
+        #
+        # A trap on EXIT restarts vm-api on any failure after the stop,
+        # so production is never left down.
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'set -e; \
@@ -137,7 +139,7 @@ jobs:
              STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
              NEED_DISCARD_CORRUPT=0; \
              NEED_MIGRATE=0; \
-             # --- Preflight (service still running) --- \
+             # --- Preflight (service still running): validate sources only, no copy --- \
              if [ -f "$STATE_DEST" ]; then \
                if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_DEST" 2>/dev/null; then \
                  echo "WARN: $STATE_DEST exists but does not parse as JSON — will discard and re-migrate"; \
@@ -148,20 +150,20 @@ jobs:
                if [ -f "$STATE_LEGACY" ]; then \
                  python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_LEGACY" \
                    || { echo "FATAL: legacy state.json does not parse — refusing to migrate"; exit 1; }; \
-                 cp -a "$STATE_LEGACY" "${STATE_DEST}.tmp"; \
-                 python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${STATE_DEST}.tmp" \
-                   || { echo "FATAL: post-cp .tmp does not parse"; rm -f "${STATE_DEST}.tmp"; exit 1; }; \
                  NEED_MIGRATE=1; \
                fi; \
              fi; \
-             # --- Brief stop window: ensure start runs even if mv fails --- \
+             # --- Brief stop window: snapshot + atomic mv inside, ensure start on any failure --- \
              trap "sudo systemctl start vm-api 2>/dev/null || true" EXIT; \
              sudo systemctl stop vm-api; \
              if [ "$NEED_DISCARD_CORRUPT" = "1" ]; then \
                mv "$STATE_DEST" "${STATE_DEST}.corrupt.$(date +%s)"; \
              fi; \
              if [ "$NEED_MIGRATE" = "1" ]; then \
-               echo "Migrating state.json into place"; \
+               echo "Snapshotting + migrating $STATE_LEGACY -> $STATE_DEST (service stopped)"; \
+               cp -a "$STATE_LEGACY" "${STATE_DEST}.tmp"; \
+               python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${STATE_DEST}.tmp" \
+                 || { echo "FATAL: post-cp .tmp does not parse"; rm -f "${STATE_DEST}.tmp"; exit 1; }; \
                mv "${STATE_DEST}.tmp" "$STATE_DEST"; \
              fi; \
              sudo systemctl start vm-api; \
