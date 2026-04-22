@@ -139,6 +139,44 @@ async def test_run_extraction_calls_notifier_on_failure(telegram_env, monkeypatc
     assert kwargs["meeting_id"] == "meeting-xyz"
 
 
+async def test_webhook_rejects_when_fireflies_key_empty(monkeypatch):
+    """Regression: empty FIREFLIES_API_KEY must return 503 so Fireflies retries,
+    not 202 followed by a silent drop in _run_extraction."""
+    from httpx import AsyncClient, ASGITransport
+    import main
+
+    monkeypatch.setattr(main, "VM_API_SECRET", "test-secret")
+    monkeypatch.setattr(main, "FIREFLIES_API_KEY", "")
+    monkeypatch.setattr(main, "pool", MagicMock())
+
+    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t") as client:
+        resp = await client.post(
+            "/webhook/fireflies",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"eventType": "Transcription complete", "meetingId": "abc123"},
+        )
+    assert resp.status_code == 503
+    assert "not ready" in resp.json()["detail"].lower()
+
+
+async def test_webhook_rejects_when_pool_none(monkeypatch):
+    """Regression: pool=None during degraded startup must return 503, not silent-drop."""
+    from httpx import AsyncClient, ASGITransport
+    import main
+
+    monkeypatch.setattr(main, "VM_API_SECRET", "test-secret")
+    monkeypatch.setattr(main, "FIREFLIES_API_KEY", "key")
+    monkeypatch.setattr(main, "pool", None)
+
+    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t") as client:
+        resp = await client.post(
+            "/webhook/fireflies",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"eventType": "Transcription complete", "meetingId": "abc123"},
+        )
+    assert resp.status_code == 503
+
+
 async def test_run_extraction_swallows_alert_path_errors(telegram_env, monkeypatch):
     """If Telegram itself is down, the alert-path error must not propagate —
     it would crash the BackgroundTask and mask the original failure."""

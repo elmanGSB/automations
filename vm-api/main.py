@@ -294,6 +294,18 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
     if not meeting_id:
         raise HTTPException(status_code=400, detail="Missing meeting_id")
 
+    # Runtime-readiness gate: if we can't actually run the extraction, reject
+    # with 503 so Fireflies retries the delivery once the VM is reconfigured.
+    # Without this, an empty FIREFLIES_API_KEY (or a degraded startup window
+    # where `pool` is None) would 202-accept the webhook and then silently
+    # drop the meeting inside `_run_extraction`.
+    if not FIREFLIES_API_KEY or pool is None:
+        logger.error(
+            "Rejecting Fireflies webhook for %s — not ready (key=%s, pool=%s)",
+            meeting_id, bool(FIREFLIES_API_KEY), pool is not None,
+        )
+        raise HTTPException(status_code=503, detail="VM API not ready for extraction")
+
     background_tasks.add_task(_run_extraction, meeting_id)
     return {"status": "accepted", "meeting_id": meeting_id}
 
