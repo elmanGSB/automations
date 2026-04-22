@@ -130,6 +130,11 @@ jobs:
         # the promotion. (Pre-stop cp would silently drop any updates
         # arriving in the window between cp and stop.)
         #
+        # Divergence guard: if both canonical and legacy exist with
+        # different bytes, refuse to silently choose. After the first
+        # successful deploy, the cutover renames legacy to .retired.<ts>
+        # so future deploys never see legacy and the guard never trips.
+        #
         # A trap on EXIT restarts vm-api on any failure after the stop,
         # so production is never left down.
         run: |
@@ -139,11 +144,27 @@ jobs:
              STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
              NEED_DISCARD_CORRUPT=0; \
              NEED_MIGRATE=0; \
+             DEST_VALID=0; \
              # --- Preflight (service still running): validate sources only, no copy --- \
              if [ -f "$STATE_DEST" ]; then \
-               if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_DEST" 2>/dev/null; then \
+               if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STATE_DEST" 2>/dev/null; then \
+                 DEST_VALID=1; \
+               else \
                  echo "WARN: $STATE_DEST exists but does not parse as JSON — will discard and re-migrate"; \
                  NEED_DISCARD_CORRUPT=1; \
+               fi; \
+             fi; \
+             # Divergence guard. If both exist and dest is valid, require they match. \
+             if [ "$DEST_VALID" = "1" ] && [ -f "$STATE_LEGACY" ]; then \
+               if cmp -s "$STATE_DEST" "$STATE_LEGACY"; then \
+                 echo "INFO: $STATE_LEGACY identical to $STATE_DEST — will retire after cutover"; \
+               else \
+                 echo "FATAL: $STATE_DEST and $STATE_LEGACY differ; refusing to silently choose."; \
+                 echo "       Inspect both files. After deciding which has the newer data:"; \
+                 echo "         1. Reconcile manually (e.g. union _processed and _nlm_uploaded into $STATE_DEST)"; \
+                 echo "         2. mv $STATE_LEGACY ${STATE_LEGACY}.retired.\$(date +%s)"; \
+                 echo "         3. Re-run deploy"; \
+                 exit 1; \
                fi; \
              fi; \
              if [ "$NEED_DISCARD_CORRUPT" = "1" ] || [ ! -f "$STATE_DEST" ]; then \
@@ -165,6 +186,13 @@ jobs:
                python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${STATE_DEST}.tmp" \
                  || { echo "FATAL: post-cp .tmp does not parse"; rm -f "${STATE_DEST}.tmp"; exit 1; }; \
                mv "${STATE_DEST}.tmp" "$STATE_DEST"; \
+             fi; \
+             # One-shot retirement: after this deploy, legacy is gone and the divergence \
+             # guard above can never trip on subsequent deploys. \
+             if [ -f "$STATE_LEGACY" ]; then \
+               RETIRED="${STATE_LEGACY}.retired.$(date +%s)"; \
+               echo "Retiring $STATE_LEGACY -> $RETIRED"; \
+               mv "$STATE_LEGACY" "$RETIRED"; \
              fi; \
              sudo systemctl start vm-api; \
              trap - EXIT'
