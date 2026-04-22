@@ -58,11 +58,28 @@ jobs:
              [ -d automations ] && mv automations automations-old; \
              mv automations-new automations'
 
-      - name: Install dependencies and restart
+      - name: Preserve .env on first cutover
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'cd /home/elmanamador/automations && \
-             if command -v uv &> /dev/null; then uv pip install -r requirements.txt; else pip3 install --break-system-packages -q -r requirements.txt; fi && \
+            'set -e; \
+             NEW=/home/elmanamador/automations/vm-api/.env; \
+             OLD=/home/elmanamador/vm-api/.env; \
+             if [ ! -f "$NEW" ] && [ -f "$OLD" ]; then \
+               echo "Copying .env from legacy vm-api dir"; \
+               cp "$OLD" "$NEW"; \
+               chmod 600 "$NEW"; \
+             else \
+               echo ".env already present at new location (or no legacy source)"; \
+             fi'
+
+      - name: Build vm-api venv and install dependencies
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             cd /home/elmanamador/automations/vm-api && \
+             if [ ! -d .venv ]; then python3 -m venv .venv; fi && \
+             .venv/bin/pip install --quiet --upgrade pip && \
+             .venv/bin/pip install --quiet -r /home/elmanamador/automations/requirements.txt && \
              sudo systemctl restart vm-api'
 
       - name: Health check
