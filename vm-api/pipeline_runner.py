@@ -101,9 +101,17 @@ def _run_pipeline(
     result: dict = {"meeting_id": meeting_id, "title": None, "category": None, "steps": {}}
 
     # Step 1: Fetch transcript
-    client = FirefliesClient(api_key=FIREFLIES_API_KEY)
+    # httpx client must live and die on a single event loop — using two separate
+    # asyncio.run() calls for fetch + aclose crashes with "Event loop is closed".
+    async def _fetch_with_cleanup():
+        client = FirefliesClient(api_key=FIREFLIES_API_KEY)
+        try:
+            return await client.fetch_transcript(meeting_id)
+        finally:
+            await client.aclose()
+
     try:
-        transcript = asyncio.run(client.fetch_transcript(meeting_id))
+        transcript = asyncio.run(_fetch_with_cleanup())
         result["title"] = transcript.title
         result["steps"]["fetch"] = {"status": "ok", "title": transcript.title}
         logger.info("Fetched: '%s'", transcript.title)
@@ -111,8 +119,6 @@ def _run_pipeline(
         logger.exception("Fetch step failed for meeting %s", meeting_id)
         result["steps"]["fetch"] = {"status": "error", "error": "fetch_failed"}
         return result
-    finally:
-        asyncio.run(client.aclose())
 
     # Step 2: Classify speakers
     role_map = classify_speakers(transcript.sentences, INTERNAL_TEAM_NAMES)
