@@ -42,24 +42,33 @@ jobs:
             --exclude '__pycache__/' \
             --exclude '.pytest_cache/' \
             --exclude '.ruff_cache/' \
+            --exclude 'vm-api/state.json' \
+            --exclude 'vm-api/state.json.lock' \
+            --exclude 'vm-api/*.tmp' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations/
 
-      - name: One-time legacy .env migration
+      - name: One-time legacy runtime-state migration
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'set -e; \
-             DEST=/home/elmanamador/automations/vm-api/.env; \
-             LEGACY=/home/elmanamador/vm-api/.env; \
-             if [ ! -f "$DEST" ]; then \
-               if [ -f "$LEGACY" ]; then \
-                 echo "One-time migration: $LEGACY -> $DEST"; \
-                 cp "$LEGACY" "$DEST"; \
-                 chmod 600 "$DEST"; \
+             ENV_DEST=/home/elmanamador/automations/vm-api/.env; \
+             ENV_LEGACY=/home/elmanamador/vm-api/.env; \
+             if [ ! -f "$ENV_DEST" ]; then \
+               if [ -f "$ENV_LEGACY" ]; then \
+                 echo "One-time migration: $ENV_LEGACY -> $ENV_DEST"; \
+                 cp "$ENV_LEGACY" "$ENV_DEST"; \
+                 chmod 600 "$ENV_DEST"; \
                else \
-                 echo "FATAL: no .env at $DEST or $LEGACY — vm-api would start without secrets"; \
+                 echo "FATAL: no .env at $ENV_DEST or $ENV_LEGACY — vm-api would start without secrets"; \
                  exit 1; \
                fi; \
+             fi; \
+             STATE_DEST=/home/elmanamador/automations/vm-api/state.json; \
+             STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
+             if [ ! -f "$STATE_DEST" ] && [ -f "$STATE_LEGACY" ]; then \
+               echo "One-time migration: $STATE_LEGACY -> $STATE_DEST"; \
+               cp -a "$STATE_LEGACY" "$STATE_DEST"; \
              fi'
 
       - name: Run database migrations
