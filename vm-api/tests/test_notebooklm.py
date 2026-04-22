@@ -73,3 +73,77 @@ def test_add_file_source_raises_on_nonzero_exit():
     with patch("notebooklm.subprocess.run", return_value=mock_result):
         with pytest.raises(RuntimeError, match="Failed to add source"):
             notebooklm.add_file_source("nb-123", "/tmp/test.docx", "My Meeting")
+
+
+# ---------------------------------------------------------------------------
+# list_notebooks
+# ---------------------------------------------------------------------------
+
+def _list_result(stdout):
+    m = MagicMock()
+    m.returncode = 0
+    m.stdout = stdout
+    m.stderr = ""
+    return m
+
+
+def test_list_notebooks_parses_json():
+    """list_notebooks returns a list of dicts parsed from --json output."""
+    payload = '[{"id":"a","title":"X","source_count":2},{"id":"b","title":"Y","source_count":0}]'
+    with patch("notebooklm.subprocess.run", return_value=_list_result(payload)) as run:
+        result = notebooklm.list_notebooks()
+    assert result == [
+        {"id": "a", "title": "X", "source_count": 2},
+        {"id": "b", "title": "Y", "source_count": 0},
+    ]
+    assert run.call_args[0][0] == ["nlm", "notebook", "list", "--json"]
+
+
+def test_list_notebooks_raises_on_nonzero_exit():
+    m = MagicMock()
+    m.returncode = 1
+    m.stderr = "auth"
+    with patch("notebooklm.subprocess.run", return_value=m):
+        with pytest.raises(RuntimeError, match="Failed to list notebooks"):
+            notebooklm.list_notebooks()
+
+
+def test_list_notebooks_raises_on_bad_json():
+    with patch("notebooklm.subprocess.run", return_value=_list_result("not json")):
+        with pytest.raises(RuntimeError, match="parse notebook list"):
+            notebooklm.list_notebooks()
+
+
+def test_list_notebooks_raises_on_timeout():
+    with patch(
+        "notebooklm.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="nlm", timeout=60),
+    ):
+        with pytest.raises(RuntimeError, match="Timed out listing notebooks"):
+            notebooklm.list_notebooks()
+
+
+# ---------------------------------------------------------------------------
+# find_notebook_by_title
+# ---------------------------------------------------------------------------
+
+def test_find_notebook_by_title_returns_none_when_no_match():
+    payload = '[{"id":"a","title":"Other","source_count":1}]'
+    with patch("notebooklm.subprocess.run", return_value=_list_result(payload)):
+        assert notebooklm.find_notebook_by_title("Customer Interviews & Sales") is None
+
+
+def test_find_notebook_by_title_returns_id_on_single_match():
+    payload = '[{"id":"abc","title":"Customer Interviews & Sales","source_count":3}]'
+    with patch("notebooklm.subprocess.run", return_value=_list_result(payload)):
+        assert notebooklm.find_notebook_by_title("Customer Interviews & Sales") == "abc"
+
+
+def test_find_notebook_by_title_picks_most_sources_on_duplicates():
+    """Duplicates pick the notebook with the most sources — most history wins."""
+    payload = (
+        '[{"id":"new","title":"Customer Interviews & Sales","source_count":1},'
+        '{"id":"old","title":"Customer Interviews & Sales","source_count":7}]'
+    )
+    with patch("notebooklm.subprocess.run", return_value=_list_result(payload)):
+        assert notebooklm.find_notebook_by_title("Customer Interviews & Sales") == "old"

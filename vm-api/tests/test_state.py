@@ -123,6 +123,76 @@ def test_save_notebook_id_concurrent_no_data_loss(tmp_state):
     assert _state.get_notebook_id("cat-B") == "nb-2"
 
 
+def test_get_or_create_uses_lookup_hit_and_skips_create(tmp_state):
+    """When lookup_fn finds an existing notebook, create_fn must NOT run.
+    The found ID is saved to state and returned with is_new=False.
+    """
+    create_calls = []
+    lookup_calls = []
+
+    def creator():
+        create_calls.append(1)
+        return "should-not-be-used"
+
+    def lookup():
+        lookup_calls.append(1)
+        return "found-by-title"
+
+    nb_id, is_new = _state.get_or_create_notebook_id(
+        "customer-discovery", create_fn=creator, lookup_fn=lookup
+    )
+    assert nb_id == "found-by-title"
+    assert is_new is False
+    assert lookup_calls == [1]
+    assert create_calls == []
+    assert _state.get_notebook_id("customer-discovery") == "found-by-title"
+
+
+def test_get_or_create_falls_through_to_create_when_lookup_misses(tmp_state):
+    """When lookup_fn returns None, create_fn must run normally."""
+    def lookup():
+        return None
+
+    nb_id, is_new = _state.get_or_create_notebook_id(
+        "customer-discovery",
+        create_fn=lambda: "fresh-id",
+        lookup_fn=lookup,
+    )
+    assert nb_id == "fresh-id"
+    assert is_new is True
+
+
+def test_get_or_create_falls_through_when_lookup_raises(tmp_state):
+    """A flaky lookup (e.g. nlm CLI 400) must NOT block notebook creation."""
+    def lookup():
+        raise RuntimeError("nlm RPC drift")
+
+    nb_id, is_new = _state.get_or_create_notebook_id(
+        "customer-discovery",
+        create_fn=lambda: "fresh-id",
+        lookup_fn=lookup,
+    )
+    assert nb_id == "fresh-id"
+    assert is_new is True
+
+
+def test_get_or_create_skips_lookup_when_state_has_mapping(tmp_state):
+    """Fast path: existing state mapping must short-circuit before lookup_fn."""
+    _state.save_notebook_id("customer-discovery", "cached-id")
+    lookup_calls = []
+
+    def lookup():
+        lookup_calls.append(1)
+        return "from-nlm"
+
+    nb_id, is_new = _state.get_or_create_notebook_id(
+        "customer-discovery", create_fn=lambda: "x", lookup_fn=lookup
+    )
+    assert nb_id == "cached-id"
+    assert is_new is False
+    assert lookup_calls == []
+
+
 def test_get_or_create_concurrent_same_category_one_wins(tmp_state):
     """Concurrent calls for the same missing category must persist exactly one ID."""
     barrier = threading.Barrier(2)

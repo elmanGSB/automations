@@ -133,7 +133,11 @@ def mark_meeting_processed(meeting_id: str) -> None:
     _transact(_mutate)
 
 
-def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
+def get_or_create_notebook_id(
+    category: str,
+    create_fn: Callable[[], str],
+    lookup_fn: Optional[Callable[[], Optional[str]]] = None,
+) -> tuple[str, bool]:
     """Get existing notebook ID or create and return it.
 
     Concurrent callers for the same missing category serialize on a
@@ -145,6 +149,14 @@ def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
     120s timeout) does NOT block unrelated state writes (mark_processed,
     mark_nlm_uploaded for other meetings) or notebook creation for
     other categories.
+
+    If lookup_fn is given and state has no mapping, it is called BEFORE
+    create_fn to check whether a matching notebook already exists in the
+    external system (e.g. NotebookLM). This is the defense against
+    state.json wipes silently spawning duplicate external notebooks. A
+    lookup hit is saved and returned with is_new=False. A lookup that
+    raises is logged and we fall through to create_fn — never block notebook
+    creation on a flaky list call.
     """
     existing = get_notebook_id(category)
     if existing:
@@ -157,6 +169,21 @@ def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
         existing = get_notebook_id(category)
         if existing:
             return (existing, False)
+
+        if lookup_fn is not None:
+            try:
+                found = lookup_fn()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Notebook title lookup failed for category %s; falling through to create",
+                    category,
+                )
+                found = None
+            if found:
+                save_notebook_id(category, found)
+                return (found, False)
+
         notebook_id = create_fn()
         save_notebook_id(category, notebook_id)
         return (notebook_id, True)

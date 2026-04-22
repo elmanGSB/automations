@@ -24,7 +24,12 @@ from docx_generator import generate_transcript_docx
 from emailer import send_novel_report
 from fireflies import FirefliesClient
 from hindsight import retain_meeting, retain_novel_insights
-from notebooklm import add_file_source, create_notebook, notebook_title_for_category
+from notebooklm import (
+    add_file_source,
+    create_notebook,
+    find_notebook_by_title,
+    notebook_title_for_category,
+)
 from notifier import notify_new_category
 from speaker_roles import classify_speakers
 from state import (
@@ -206,7 +211,8 @@ def _run_pipeline(
             nb_title = notebook_title_for_category(classification.category)
             notebook_id, is_new_notebook = get_or_create_notebook_id(
                 classification.category,
-                lambda: create_notebook(nb_title),
+                create_fn=lambda: create_notebook(nb_title),
+                lookup_fn=lambda: find_notebook_by_title(nb_title),
             )
             result["steps"]["notebooklm_notebook"] = {
                 "status": "ok",
