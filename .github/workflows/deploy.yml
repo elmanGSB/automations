@@ -25,14 +25,9 @@ jobs:
           VM_API_SECRET: ci-dummy-vm-secret
           TELEGRAM_BOT_TOKEN: ci-dummy-token
           TELEGRAM_CHAT_ID: "000000"
-        # Same deselects as ci.yml — pre-existing test bugs, separate follow-up.
+        # Same deselects as ci.yml — test_classifier needs live BAML proxy.
         run: |
           pytest tests/ -v --tb=short \
-            --deselect tests/test_state.py::test_concurrent_mark_processed_no_data_loss \
-            --deselect tests/test_state.py::test_mark_processed_caps_at_500 \
-            --deselect tests/test_state.py::test_concurrent_mark_nlm_no_data_loss \
-            --deselect tests/test_state.py::test_save_notebook_id_concurrent_no_data_loss \
-            --deselect tests/test_state.py::test_get_or_create_concurrent_same_category_one_wins \
             --deselect tests/test_classifier.py::test_tools_research_classification \
             --deselect tests/test_classifier.py::test_advisor_vs_tools_research_disambiguation
 
@@ -64,7 +59,7 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
             ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/elmanamador/automations/
 
-      - name: One-time legacy runtime-state migration
+      - name: One-time legacy .env migration
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
             'set -e; \
@@ -79,12 +74,6 @@ jobs:
                  echo "FATAL: no .env at $ENV_DEST or $ENV_LEGACY — vm-api would start without secrets"; \
                  exit 1; \
                fi; \
-             fi; \
-             STATE_DEST=/home/elmanamador/automations/vm-api/state.json; \
-             STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
-             if [ ! -f "$STATE_DEST" ] && [ -f "$STATE_LEGACY" ]; then \
-               echo "One-time migration: $STATE_LEGACY -> $STATE_DEST"; \
-               cp -a "$STATE_LEGACY" "$STATE_DEST"; \
              fi'
 
       - name: Run database migrations
@@ -135,10 +124,22 @@ jobs:
              .venv/bin/pip install --quiet --upgrade pip && \
              .venv/bin/pip install --quiet -r /home/elmanamador/automations/requirements.txt'
 
-      - name: Restart vm-api
+      - name: Cutover — stop, migrate state, start
+        # Service is stopped for the state migration so no writes can race
+        # the copy. Without this envelope, a webhook arriving between copy
+        # and restart would mutate the legacy file only, losing those
+        # markers on retry (STATE_DEST guard makes retries no-op).
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'sudo systemctl restart vm-api'
+            'set -e; \
+             sudo systemctl stop vm-api; \
+             STATE_DEST=/home/elmanamador/automations/vm-api/state.json; \
+             STATE_LEGACY=/home/elmanamador/vm-api/state.json; \
+             if [ ! -f "$STATE_DEST" ] && [ -f "$STATE_LEGACY" ]; then \
+               echo "One-time migration: $STATE_LEGACY -> $STATE_DEST (service stopped)"; \
+               cp -a "$STATE_LEGACY" "$STATE_DEST"; \
+             fi; \
+             sudo systemctl start vm-api'
 
       - name: Health check
         run: |
