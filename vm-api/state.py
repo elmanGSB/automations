@@ -13,12 +13,6 @@ from config import STATE_FILE as _DEFAULT_STATE_FILE
 if "state" not in sys.modules or not hasattr(sys.modules.get("state"), "STATE_FILE"):
     STATE_FILE = _DEFAULT_STATE_FILE
 
-# Bound the _processed list so state.json does not grow unbounded. Kept
-# FIFO (oldest dropped); 500 is large enough to cover realistic webhook
-# replay windows.
-PROCESSED_CAP = 500
-
-
 def _atomic_write(path: str, data: dict) -> None:
     """Write JSON atomically via a tempfile in the same dir + rename.
 
@@ -39,20 +33,33 @@ def _atomic_write(path: str, data: dict) -> None:
 
 
 @contextmanager
-def _locked():
-    """Acquire an exclusive flock on STATE_FILE.lock for the duration.
+def _named_lock(suffix: str):
+    """Acquire an exclusive flock on STATE_FILE.<suffix> for the duration.
 
-    Wraps the full read-modify-write transaction so concurrent callers
-    cannot interleave and lose updates.
+    Distinct suffixes give independent locks. Used for the global state
+    write lock (.lock) and per-category notebook-creation locks
+    (.create-<category>.lock) so a slow notebook-create subprocess does
+    not stall unrelated state writes.
     """
     state_file = sys.modules[__name__].STATE_FILE
-    lock_file = state_file + ".lock"
+    lock_file = f"{state_file}.{suffix}"
     with open(lock_file, "w") as lock_fd:
         flock(lock_fd, LOCK_EX)
         try:
             yield
         finally:
             flock(lock_fd, LOCK_UN)
+
+
+@contextmanager
+def _locked():
+    """Acquire the global state-write lock (STATE_FILE.lock).
+
+    Wraps the full read-modify-write transaction so concurrent callers
+    cannot interleave and lose updates.
+    """
+    with _named_lock("lock"):
+        yield
 
 
 def _load_unlocked() -> dict:
@@ -109,56 +116,50 @@ def is_meeting_processed(meeting_id: str) -> bool:
 def mark_meeting_processed(meeting_id: str) -> None:
     """Record a meeting ID as processed to prevent duplicate runs.
 
-    List is capped at PROCESSED_CAP entries, FIFO (oldest dropped).
+    The list is intentionally never evicted: is_meeting_processed is
+    the pipeline's top-level idempotency gate, and dropping IDs would
+    let delayed webhook retries reprocess past meetings (duplicate
+    discovery extraction, retention, notification).
+
+    State.json size scales linearly with meeting count: ~30 bytes per
+    ID. At 10 meetings/day for 5 years that is ~550 KB — trivial for
+    a JSON load on every webhook. If we ever outgrow JSON, idempotency
+    moves to Postgres with a unique constraint, not a count-based cap.
     """
     def _mutate(data: dict) -> None:
         processed = data.setdefault("_processed", [])
         if meeting_id not in processed:
             processed.append(meeting_id)
-        if len(processed) > PROCESSED_CAP:
-            data["_processed"] = processed[-PROCESSED_CAP:]
     _transact(_mutate)
 
 
 def get_or_create_notebook_id(category: str, create_fn) -> tuple[str, bool]:
     """Get existing notebook ID or create and return it.
 
-    Returns (notebook_id, is_new) where is_new=True iff this call's
-    candidate id won the CAS. All callers return the same persisted id.
+    Concurrent callers for the same missing category serialize on a
+    PER-CATEGORY lock (not the global state lock). Exactly one caller
+    runs create_fn; the rest see the persisted id and return is_new=False.
+    No orphan external notebooks.
 
-    create_fn runs OUTSIDE the state lock — it may be a slow external
-    subprocess (NotebookLM CLI, 120s timeout), and holding the state
-    lock across it would freeze unrelated state writes (_processed /
-    _nlm_uploaded markers for other meetings).
-
-    Tradeoff: if two callers race the first-create for the same
-    category (rare — new categories are weekly at most), both call
-    create_fn(); only one wins the CAS. The loser's notebook is
-    orphaned (created externally but never referenced). Cosmetic cost
-    vs. global stall on every other state write.
+    Per-category lock means a slow create_fn (NotebookLM CLI subprocess,
+    120s timeout) does NOT block unrelated state writes (mark_processed,
+    mark_nlm_uploaded for other meetings) or notebook creation for
+    other categories.
     """
     existing = get_notebook_id(category)
     if existing:
         return (existing, False)
 
-    # Slow external work happens here, WITHOUT the state lock.
-    candidate_id = create_fn()
-
-    result: dict = {}
-
-    def _mutate(data: dict) -> None:
-        if category in data:
-            # Lost the race. Our candidate is orphaned (already
-            # externally created but unreferenced).
-            result["id"] = data[category]
-            result["is_new"] = False
-            return
-        data[category] = candidate_id
-        result["id"] = candidate_id
-        result["is_new"] = True
-
-    _transact(_mutate)
-    return (result["id"], result["is_new"])
+    # Per-category lock: serializes only same-category creators.
+    with _named_lock(f"create-{category}.lock"):
+        # Re-check under the lock — another caller may have created it
+        # while we were waiting on the lock.
+        existing = get_notebook_id(category)
+        if existing:
+            return (existing, False)
+        notebook_id = create_fn()
+        save_notebook_id(category, notebook_id)
+        return (notebook_id, True)
 
 
 def is_nlm_uploaded(meeting_id: str) -> bool:

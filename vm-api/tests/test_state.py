@@ -30,14 +30,22 @@ def test_concurrent_mark_processed_no_data_loss(tmp_state):
     assert _state.is_meeting_processed("meeting-B")
 
 
-def test_mark_processed_caps_at_500(tmp_state):
-    """_processed list must never exceed 500 entries."""
+def test_mark_processed_does_not_evict(tmp_state):
+    """_processed list must NOT evict — is_meeting_processed is the
+    pipeline's idempotency gate. Any cap would let delayed webhook
+    retries reprocess past meetings (duplicate discovery extraction,
+    retention, notification). State.json size scales linearly with
+    meeting count and is trivial at realistic volumes.
+    """
     for i in range(510):
         _state.mark_meeting_processed(f"meeting-{i}")
     import json
     with open(tmp_state) as f:
         data = json.load(f)
-    assert len(data["_processed"]) == 500
+    assert len(data["_processed"]) == 510
+    # Spot-check: oldest and newest both retained.
+    assert "meeting-0" in data["_processed"]
+    assert "meeting-509" in data["_processed"]
 
 
 def test_mark_nlm_uploaded_and_check(tmp_state):
