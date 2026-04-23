@@ -1,5 +1,8 @@
+import json
 import re
 import subprocess
+from typing import Optional
+
 from config import KNOWN_CATEGORIES
 
 
@@ -49,6 +52,45 @@ def add_file_source(notebook_id: str, file_path: str, title: str) -> None:
         raise RuntimeError(
             f"Failed to add source to notebook '{notebook_id}': {result.stderr.strip()}"
         )
+
+
+def list_notebooks() -> list[dict]:
+    """Return all NotebookLM notebooks as a list of dicts.
+
+    Each dict has at minimum: id, title, source_count, updated_at. Raises
+    RuntimeError on subprocess failure or unparseable output. Requires
+    notebooklm-mcp-cli >= 0.5.18 — older versions return 400 on the list RPC.
+    """
+    try:
+        result = subprocess.run(
+            ["nlm", "notebook", "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Timed out listing notebooks after 60s")
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to list notebooks: {result.stderr.strip()}")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to parse notebook list JSON: {e}")
+
+
+def find_notebook_by_title(title: str) -> Optional[str]:
+    """Return the ID of an existing notebook with this exact title, or None.
+
+    When state.json is wiped, multiple notebooks may share a title. In that
+    case, return the one with the most sources — the notebook with the most
+    history worth preserving. Caller should prefer this over creating a new
+    duplicate.
+    """
+    matches = [nb for nb in list_notebooks() if nb.get("title") == title]
+    if not matches:
+        return None
+    matches.sort(key=lambda nb: nb.get("source_count", 0), reverse=True)
+    return matches[0]["id"]
 
 
 def notebook_title_for_category(category: str) -> str:
