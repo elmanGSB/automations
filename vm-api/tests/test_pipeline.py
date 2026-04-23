@@ -85,8 +85,8 @@ def test_pipeline_returns_structured_steps():
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, return_value={"interview_id": 1}), \
          patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
          patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
-         patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
-         patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/test.docx"), \
+         patch("pipeline_runner.add_file_source"), \
          patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="Novel stuff here")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
@@ -149,8 +149,8 @@ def test_pipeline_skips_extraction_when_all_speakers_internal():
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock) as mock_extract, \
          patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
          patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
-         patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
-         patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/test.docx"), \
+         patch("pipeline_runner.add_file_source"), \
          patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="some novel")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
@@ -182,8 +182,8 @@ def test_pipeline_skips_email_when_novel_is_empty():
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, return_value={"interview_id": 1}), \
          patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
          patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
-         patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
-         patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/test.docx"), \
+         patch("pipeline_runner.add_file_source"), \
          patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
@@ -215,8 +215,8 @@ def test_pipeline_skips_extraction_for_non_discovery_category():
          patch("pipeline_runner.format_external_with_context", return_value="external transcript"), \
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock) as mock_extract, \
          patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
-         patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
-         patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/test.docx"), \
+         patch("pipeline_runner.add_file_source"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="novel")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -246,7 +246,7 @@ def test_pipeline_skips_nlm_and_email_for_class_meetings():
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value=""), \
          patch("pipeline_runner.get_or_create_notebook_id") as mock_nb, \
-         patch("pipeline_runner.add_pdf_source") as mock_upload, \
+         patch("pipeline_runner.add_file_source") as mock_upload, \
          patch("pipeline_runner.analyze_novel") as mock_analyze, \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -324,7 +324,7 @@ async def test_pipeline_run_returns_result():
 # ---------------------------------------------------------------------------
 
 def test_pipeline_skips_nlm_upload_when_already_uploaded():
-    """If is_nlm_uploaded returns True, add_pdf_source must not be called."""
+    """If is_nlm_uploaded returns True, add_file_source must not be called."""
     mock_transcript, mock_cls, make_ff = _full_happy_path_patches()
 
     with patch("pipeline_runner.is_meeting_processed", return_value=False), \
@@ -338,7 +338,7 @@ def test_pipeline_skips_nlm_upload_when_already_uploaded():
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, return_value={"interview_id": 1}), \
          patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
          patch("pipeline_runner.is_nlm_uploaded", return_value=True), \
-         patch("pipeline_runner.add_pdf_source") as mock_upload, \
+         patch("pipeline_runner.add_file_source") as mock_upload, \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="Novel stuff here")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -376,8 +376,8 @@ def test_pipeline_passes_transcript_date_not_today():
          patch("pipeline_runner.process_discovery_meeting", new_callable=AsyncMock, side_effect=capture), \
          patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-123", False)), \
          patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
-         patch("pipeline_runner.generate_transcript_pdf", return_value="/tmp/test.pdf"), \
-         patch("pipeline_runner.add_pdf_source"), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/test.docx"), \
+         patch("pipeline_runner.add_file_source"), \
          patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel", return_value=MagicMock(novel="Novel")), \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock), \
