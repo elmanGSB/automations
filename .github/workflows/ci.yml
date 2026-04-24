@@ -24,8 +24,6 @@ jobs:
       - name: Run vm-api tests
         working-directory: vm-api
         env:
-          # FIREFLIES_WEBHOOK_SECRET intentionally unset: keeps HMAC signature
-          # check disabled in tests (see _verify_fireflies_signature).
           FIREFLIES_API_KEY: ci-dummy-key
           VM_API_SECRET: ci-dummy-vm-secret
           TELEGRAM_BOT_TOKEN: ci-dummy-token

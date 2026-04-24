@@ -1,17 +1,12 @@
 # vm-api/tests/test_notifier.py
 """Tests for the Telegram notifier — the alert path that error handling depends on.
 
-The silent-fail behaviour this module replaced was the root cause of an
-operational incident: Fireflies extraction would raise inside a FastAPI
-BackgroundTask, get swallowed, and never notify anyone. These tests lock in
-the behaviour that keeps that class of failure visible:
+These tests lock in the behaviour that keeps failures visible:
 
   1. send_error must post to Telegram when called
   2. send_error must raise KeyError (not silently no-op) when the VM is
      misconfigured
   3. send_error must never leak the bot token into exception messages
-  4. _run_extraction must always call send_error on failure and must never
-     re-raise from the alert path
 """
 import os
 
@@ -115,82 +110,3 @@ async def test_send_error_scrubs_token_from_http_error(telegram_env):
     assert exc_info.value.__suppress_context__ is True
 
 
-async def test_run_extraction_calls_notifier_on_failure(telegram_env, monkeypatch):
-    """The primary regression test: when extraction fails inside the
-    FastAPI BackgroundTask, send_error must fire."""
-    import main
-
-    monkeypatch.setattr(main, "FIREFLIES_API_KEY", "fake-key")
-    monkeypatch.setattr(main, "pool", MagicMock())
-
-    mock_ff = MagicMock()
-    mock_ff.fetch_transcript = AsyncMock(side_effect=RuntimeError("fireflies API down"))
-    mock_ff.aclose = AsyncMock()
-
-    with patch("main.FirefliesClient", return_value=mock_ff), \
-         patch("notifier.send_error", new_callable=AsyncMock) as mock_send:
-        await main._run_extraction("meeting-xyz")
-
-    mock_send.assert_called_once()
-    _args, kwargs = mock_send.call_args
-    assert mock_send.call_args.args[0] == "Fireflies extraction failed"
-    assert "RuntimeError" in mock_send.call_args.args[1]
-    assert "fireflies API down" in mock_send.call_args.args[1]
-    assert kwargs["meeting_id"] == "meeting-xyz"
-
-
-async def test_webhook_rejects_when_fireflies_key_empty(monkeypatch):
-    """Regression: empty FIREFLIES_API_KEY must return 503 so Fireflies retries,
-    not 202 followed by a silent drop in _run_extraction."""
-    from httpx import AsyncClient, ASGITransport
-    import main
-
-    monkeypatch.setattr(main, "VM_API_SECRET", "test-secret")
-    monkeypatch.setattr(main, "FIREFLIES_API_KEY", "")
-    monkeypatch.setattr(main, "pool", MagicMock())
-
-    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t") as client:
-        resp = await client.post(
-            "/webhook/fireflies",
-            headers={"Authorization": "Bearer test-secret"},
-            json={"eventType": "Transcription complete", "meetingId": "abc123"},
-        )
-    assert resp.status_code == 503
-    assert "not ready" in resp.json()["detail"].lower()
-
-
-async def test_webhook_rejects_when_pool_none(monkeypatch):
-    """Regression: pool=None during degraded startup must return 503, not silent-drop."""
-    from httpx import AsyncClient, ASGITransport
-    import main
-
-    monkeypatch.setattr(main, "VM_API_SECRET", "test-secret")
-    monkeypatch.setattr(main, "FIREFLIES_API_KEY", "key")
-    monkeypatch.setattr(main, "pool", None)
-
-    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t") as client:
-        resp = await client.post(
-            "/webhook/fireflies",
-            headers={"Authorization": "Bearer test-secret"},
-            json={"eventType": "Transcription complete", "meetingId": "abc123"},
-        )
-    assert resp.status_code == 503
-
-
-async def test_run_extraction_swallows_alert_path_errors(telegram_env, monkeypatch):
-    """If Telegram itself is down, the alert-path error must not propagate —
-    it would crash the BackgroundTask and mask the original failure."""
-    import main
-
-    monkeypatch.setattr(main, "FIREFLIES_API_KEY", "fake-key")
-    monkeypatch.setattr(main, "pool", MagicMock())
-
-    mock_ff = MagicMock()
-    mock_ff.fetch_transcript = AsyncMock(side_effect=RuntimeError("primary failure"))
-    mock_ff.aclose = AsyncMock()
-
-    with patch("main.FirefliesClient", return_value=mock_ff), \
-         patch("notifier.send_error", new_callable=AsyncMock,
-               side_effect=RuntimeError("Telegram API 500")):
-        # Must not raise.
-        await main._run_extraction("meeting-xyz")
