@@ -139,21 +139,31 @@ async def test_run_extraction_calls_notifier_on_failure(telegram_env, monkeypatc
     assert kwargs["meeting_id"] == "meeting-xyz"
 
 
+def _signed(secret: str, body: bytes) -> dict:
+    import hashlib
+    import hmac
+    return {
+        "x-hub-signature": "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest(),
+        "Content-Type": "application/json",
+    }
+
+
 async def test_webhook_rejects_when_fireflies_key_empty(monkeypatch):
     """Regression: empty FIREFLIES_API_KEY must return 503 so Fireflies retries,
     not 202 followed by a silent drop in _run_extraction."""
     from httpx import AsyncClient, ASGITransport
     import main
 
-    monkeypatch.setattr(main, "VM_API_SECRET", "test-secret")
+    monkeypatch.setattr(main, "FIREFLIES_WEBHOOK_SECRET", "wsec")
     monkeypatch.setattr(main, "FIREFLIES_API_KEY", "")
     monkeypatch.setattr(main, "pool", MagicMock())
 
+    body = b'{"eventType":"Transcription complete","meetingId":"abc123"}'
     async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t") as client:
         resp = await client.post(
             "/webhook/fireflies",
-            headers={"Authorization": "Bearer test-secret"},
-            json={"eventType": "Transcription complete", "meetingId": "abc123"},
+            headers=_signed("wsec", body),
+            content=body,
         )
     assert resp.status_code == 503
     assert "not ready" in resp.json()["detail"].lower()
@@ -164,15 +174,16 @@ async def test_webhook_rejects_when_pool_none(monkeypatch):
     from httpx import AsyncClient, ASGITransport
     import main
 
-    monkeypatch.setattr(main, "VM_API_SECRET", "test-secret")
+    monkeypatch.setattr(main, "FIREFLIES_WEBHOOK_SECRET", "wsec")
     monkeypatch.setattr(main, "FIREFLIES_API_KEY", "key")
     monkeypatch.setattr(main, "pool", None)
 
+    body = b'{"eventType":"Transcription complete","meetingId":"abc123"}'
     async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://t") as client:
         resp = await client.post(
             "/webhook/fireflies",
-            headers={"Authorization": "Bearer test-secret"},
-            json={"eventType": "Transcription complete", "meetingId": "abc123"},
+            headers=_signed("wsec", body),
+            content=body,
         )
     assert resp.status_code == 503
 

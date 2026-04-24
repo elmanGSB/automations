@@ -84,9 +84,9 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 def _verify_fireflies_signature(payload: bytes, signature_header: str) -> bool:
-    """Verify Fireflies HMAC-SHA256 webhook signature. Skipped if secret not set."""
+    """Verify Fireflies HMAC-SHA256 webhook signature. Fails closed if secret unset."""
     if not FIREFLIES_WEBHOOK_SECRET:
-        return True  # disabled — same behaviour as current interview-router
+        return False
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(
@@ -264,10 +264,13 @@ async def list_interviews(limit: int = 20):
 
 
 # ---------------------------------------------------------------------------
-# Fireflies webhook (legacy — kept for backwards compat during transition)
+# Fireflies webhook — direct path. Fireflies → Caddy → here.
+# Auth is the HMAC signature (x-hub-signature) verified against
+# FIREFLIES_WEBHOOK_SECRET. See BACKLOG.md for the planned migration to the
+# Windmill-orchestrated path.
 # ---------------------------------------------------------------------------
 
-@app.post("/webhook/fireflies", status_code=202, dependencies=[Depends(require_auth)])
+@app.post("/webhook/fireflies", status_code=202)
 async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks):
     body = await request.body()
 

@@ -1,7 +1,14 @@
+import hashlib
+import hmac
+
 import asyncpg
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
+
+
+def _sign(secret: str, body: bytes) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
 def make_mock_pool():
@@ -28,53 +35,74 @@ def app_client(mock_pool):
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-# --- require_auth: fail-closed when secret unset ---
+# --- /webhook/fireflies: signature missing → 401 ---
 
 @pytest.mark.asyncio
-async def test_webhook_rejects_when_secret_unset(app_client, monkeypatch):
-    """When VM_API_SECRET is not set, webhook must reject, not pass through."""
+async def test_webhook_rejects_when_signature_missing(app_client, monkeypatch):
     import main
-    # monkeypatch must target main.VM_API_SECRET (module binding read at call time),
-    # not os.environ — if require_auth moves to a separate module, update this target.
-    monkeypatch.setattr(main, "VM_API_SECRET", "")
+    monkeypatch.setattr(main, "FIREFLIES_WEBHOOK_SECRET", "wsec")
     async with app_client as client:
         resp = await client.post(
             "/webhook/fireflies",
-            json={"eventType": "Transcription complete", "meetingId": "abc"},
-        )
-    assert resp.status_code == 500
-    assert "not configured" in resp.json()["detail"].lower()
-
-
-# --- require_auth: valid token passes ---
-
-@pytest.mark.asyncio
-async def test_webhook_accepts_valid_token(app_client, monkeypatch):
-    import main
-    monkeypatch.setattr(main, "VM_API_SECRET", "mysecret")
-    async with app_client as client:
-        resp = await client.post(
-            "/webhook/fireflies",
-            headers={"Authorization": "Bearer mysecret"},
-            json={"eventType": "ignored_event"},
-        )
-    # 202 accepted (or 200 ignored) — not 401/500
-    assert resp.status_code in (200, 202)
-
-
-# --- require_auth: wrong token rejected ---
-
-@pytest.mark.asyncio
-async def test_webhook_rejects_wrong_token(app_client, monkeypatch):
-    import main
-    monkeypatch.setattr(main, "VM_API_SECRET", "mysecret")
-    async with app_client as client:
-        resp = await client.post(
-            "/webhook/fireflies",
-            headers={"Authorization": "Bearer wrongtoken"},
             json={"eventType": "Transcription complete", "meetingId": "abc"},
         )
     assert resp.status_code == 401
+
+
+# --- /webhook/fireflies: signature wrong → 401 ---
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_wrong_signature(app_client, monkeypatch):
+    import main
+    monkeypatch.setattr(main, "FIREFLIES_WEBHOOK_SECRET", "wsec")
+    async with app_client as client:
+        resp = await client.post(
+            "/webhook/fireflies",
+            headers={"x-hub-signature": "sha256=deadbeef"},
+            json={"eventType": "Transcription complete", "meetingId": "abc"},
+        )
+    assert resp.status_code == 401
+
+
+# --- /webhook/fireflies: fail-closed when FIREFLIES_WEBHOOK_SECRET unset ---
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_when_webhook_secret_unset(app_client, monkeypatch):
+    import main
+    monkeypatch.setattr(main, "FIREFLIES_WEBHOOK_SECRET", "")
+    body = b'{"eventType":"Transcription complete","meetingId":"abc"}'
+    async with app_client as client:
+        resp = await client.post(
+            "/webhook/fireflies",
+            headers={
+                "x-hub-signature": _sign("anysecret", body),
+                "Content-Type": "application/json",
+            },
+            content=body,
+        )
+    assert resp.status_code == 401
+
+
+# --- /webhook/fireflies: valid signature accepted ---
+
+@pytest.mark.asyncio
+async def test_webhook_accepts_valid_signature(app_client, monkeypatch):
+    import main
+    monkeypatch.setattr(main, "FIREFLIES_WEBHOOK_SECRET", "wsec")
+    body = b'{"eventType":"ignored_event"}'
+    async with app_client as client:
+        resp = await client.post(
+            "/webhook/fireflies",
+            headers={
+                "x-hub-signature": _sign("wsec", body),
+                "Content-Type": "application/json",
+            },
+            content=body,
+        )
+    # 202 default for the route — signature passed, payload was a non-transcription
+    # event so it short-circuits with status="ignored" but FastAPI still returns 202.
+    assert resp.status_code == 202
+    assert resp.json().get("status") == "ignored"
 
 
 # --- /api/interviews requires auth ---
