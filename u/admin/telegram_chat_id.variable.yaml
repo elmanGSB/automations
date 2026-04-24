@@ -1,0 +1,2 @@
+description: Telegram chat ID for Hitokiri_nic_bot alerts. Marked is_secret to keep wmill-sync from clobbering it (value stays managed via API/UI, not the repo).
+is_secret: true
