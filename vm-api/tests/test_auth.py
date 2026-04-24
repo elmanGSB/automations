@@ -31,50 +31,17 @@ def app_client(mock_pool):
 # --- require_auth: fail-closed when secret unset ---
 
 @pytest.mark.asyncio
-async def test_webhook_rejects_when_secret_unset(app_client, monkeypatch):
-    """When VM_API_SECRET is not set, webhook must reject, not pass through."""
+async def test_pipeline_run_rejects_when_secret_unset(app_client, monkeypatch):
+    """When VM_API_SECRET is not set, the auth-gated endpoint must reject."""
     import main
-    # monkeypatch must target main.VM_API_SECRET (module binding read at call time),
-    # not os.environ — if require_auth moves to a separate module, update this target.
     monkeypatch.setattr(main, "VM_API_SECRET", "")
     async with app_client as client:
         resp = await client.post(
-            "/webhook/fireflies",
-            json={"eventType": "Transcription complete", "meetingId": "abc"},
+            "/api/pipeline/run",
+            json={"meeting_id": "abc"},
         )
     assert resp.status_code == 500
     assert "not configured" in resp.json()["detail"].lower()
-
-
-# --- require_auth: valid token passes ---
-
-@pytest.mark.asyncio
-async def test_webhook_accepts_valid_token(app_client, monkeypatch):
-    import main
-    monkeypatch.setattr(main, "VM_API_SECRET", "mysecret")
-    async with app_client as client:
-        resp = await client.post(
-            "/webhook/fireflies",
-            headers={"Authorization": "Bearer mysecret"},
-            json={"eventType": "ignored_event"},
-        )
-    # 202 accepted (or 200 ignored) — not 401/500
-    assert resp.status_code in (200, 202)
-
-
-# --- require_auth: wrong token rejected ---
-
-@pytest.mark.asyncio
-async def test_webhook_rejects_wrong_token(app_client, monkeypatch):
-    import main
-    monkeypatch.setattr(main, "VM_API_SECRET", "mysecret")
-    async with app_client as client:
-        resp = await client.post(
-            "/webhook/fireflies",
-            headers={"Authorization": "Bearer wrongtoken"},
-            json={"eventType": "Transcription complete", "meetingId": "abc"},
-        )
-    assert resp.status_code == 401
 
 
 # --- /api/interviews requires auth ---

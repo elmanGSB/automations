@@ -1,6 +1,6 @@
 # Automations Pipeline
 
-Processes Fireflies meeting transcripts end-to-end: fetch → classify → extract → analyze → email. Runs on the Paperclip VM at port 3101, triggered by Windmill via webhook.
+Processes Fireflies meeting transcripts end-to-end: fetch → classify → extract → analyze → email. Runs on the Paperclip VM at port 3101, called by Windmill after Fireflies fires the `f/discovery/fireflies_webhook` flow.
 
 ## Flow
 
@@ -10,7 +10,7 @@ Processes Fireflies meeting transcripts end-to-end: fetch → classify → extra
 flowchart TD
     A([Fireflies webhook\nWindmill trigger]) --> B
 
-    B[POST /webhook/fireflies\nvm-api :3101]
+    B[POST /api/pipeline/run\nvm-api :3101]
 
     B --> S1[① Fetch transcript\nFireflies API]
     S1 --> S2[② Classify speakers\ninternal vs external]
@@ -110,7 +110,7 @@ Windmill can retry jobs. The pipeline is safe to re-run:
 
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app, `/webhook/fireflies` and `/api/pipeline/run` endpoints |
+| `main.py` | FastAPI app, `/api/pipeline/run` and other endpoints |
 | `pipeline_runner.py` | Full pipeline orchestration — all 10 steps |
 | `config.py` | Categories, internal team names, NLM filter, API keys |
 | `speaker_roles.py` | Classifies speakers as internal or external |

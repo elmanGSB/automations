@@ -11,9 +11,9 @@ GitHub Actions → wmill sync push → Windmill
 
 Fireflies transcript ready
   ↓
-Windmill: fireflies_webhook flow
+Windmill: fireflies_webhook flow  (Fireflies POSTs to a token-scoped Windmill webhook URL)
   ↓ validate event
-  ↓ POST /webhook/fireflies → VM API (paperclip-vm :3101)
+  ↓ POST /api/pipeline/run → VM API (paperclip-vm :3101)
      ↓ 10-step pipeline (see vm-api/README.md)
      ↓ results per step returned as structured JSON
   ↓ alert on fatal step errors (Telegram)
@@ -50,7 +50,7 @@ The pipeline logic runs on the Paperclip VM (`paperclip-vm`, port 3101). See [`v
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `POST` | `/webhook/fireflies` | Bearer token | Run full meeting pipeline |
+| `POST` | `/api/pipeline/run` | Bearer token | Run full meeting pipeline (Windmill calls this on Fireflies events) |
 | `POST` | `/api/digest/run` | Bearer token | Run weekly patterns analysis + email |
 | `GET` | `/health/full` | Bearer token | Check Postgres + Claude proxy |
 | `GET` | `/health` | None | Liveness check |

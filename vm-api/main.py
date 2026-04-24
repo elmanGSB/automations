@@ -3,8 +3,7 @@ VM API — central HTTP interface for Paperclip VM services.
 
 Runs on port 3101. Consolidates:
   - /api/leads          — demo form submissions from broccolli.ai
-  - /webhook/fireflies  — Fireflies meeting extraction trigger (called by Windmill)
-  - /api/pipeline/run   — full discovery pipeline (Windmill calls this)
+  - /api/pipeline/run   — full discovery pipeline (Windmill calls this on Fireflies events)
   - /api/digest/run     — weekly aggregate patterns analysis for all NLM notebooks
   - /health, /health/full — liveness + dependency checks
   - /api/interviews     — read recent interviews
@@ -17,8 +16,6 @@ Deploy:
 """
 
 import asyncio
-import hashlib
-import hmac
 import logging
 import os
 import re
@@ -27,15 +24,13 @@ from typing import Any
 
 import asyncpg
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
 from analyzer import analyze_patterns
 from config import NLM_ENABLED_CATEGORIES
-from discovery_extractor import process_discovery_meeting
 from emailer import send_patterns_report
-from fireflies import FirefliesClient
 from pipeline_runner import run_meeting_pipeline
 from state import get_all_notebooks
 
@@ -47,7 +42,6 @@ DATABASE_URL = os.environ.get(
     "postgresql://paperclip:paperclip@127.0.0.1:5432/discovery",
 )
 FIREFLIES_API_KEY = os.environ.get("FIREFLIES_API_KEY", "")
-FIREFLIES_WEBHOOK_SECRET = os.environ.get("FIREFLIES_WEBHOOK_SECRET", "")
 VM_API_SECRET = os.environ.get("VM_API_SECRET", "")
 
 pool: asyncpg.Pool | None = None
@@ -82,18 +76,6 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
-
-def _verify_fireflies_signature(payload: bytes, signature_header: str) -> bool:
-    """Verify Fireflies HMAC-SHA256 webhook signature. Skipped if secret not set."""
-    if not FIREFLIES_WEBHOOK_SECRET:
-        return True  # disabled — same behaviour as current interview-router
-    if not signature_header or not signature_header.startswith("sha256="):
-        return False
-    expected = "sha256=" + hmac.new(
-        FIREFLIES_WEBHOOK_SECRET.encode(), payload, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
-
 
 async def require_auth(authorization: str = Header(default="")):
     """Bearer token guard for internal endpoints called by Windmill."""
@@ -261,97 +243,6 @@ async def list_interviews(limit: int = 20):
         limit,
     )
     return [dict(r) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# Fireflies webhook (legacy — kept for backwards compat during transition)
-# ---------------------------------------------------------------------------
-
-@app.post("/webhook/fireflies", status_code=202, dependencies=[Depends(require_auth)])
-async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks):
-    body = await request.body()
-
-    logger.info(
-        "Webhook (%d bytes) from %s: %s",
-        len(body),
-        request.client.host if request.client else "unknown",
-        body[:200].decode(errors="replace"),
-    )
-
-    signature = request.headers.get("x-hub-signature", "")
-    if not _verify_fireflies_signature(body, signature):
-        raise HTTPException(status_code=401, detail="Invalid Fireflies signature")
-
-    payload = await request.json()
-    # Fireflies sends eventType/meetingId; also accept event/meeting_id (Windmill forward)
-    event = payload.get("eventType") or payload.get("event", "")
-    meeting_id = payload.get("meetingId") or payload.get("meeting_id")
-
-    # Fireflies uses "Transcription complete"; Windmill may normalise to "meeting.transcribed"
-    if event not in ("Transcription complete", "meeting.transcribed"):
-        return {"status": "ignored", "event": event}
-
-    if not meeting_id:
-        raise HTTPException(status_code=400, detail="Missing meeting_id")
-
-    # Runtime-readiness gate: if we can't actually run the extraction, reject
-    # with 503 so Fireflies retries the delivery once the VM is reconfigured.
-    # Without this, an empty FIREFLIES_API_KEY (or a degraded startup window
-    # where `pool` is None) would 202-accept the webhook and then silently
-    # drop the meeting inside `_run_extraction`.
-    if not FIREFLIES_API_KEY or pool is None:
-        logger.error(
-            "Rejecting Fireflies webhook for %s — not ready (key=%s, pool=%s)",
-            meeting_id, bool(FIREFLIES_API_KEY), pool is not None,
-        )
-        raise HTTPException(status_code=503, detail="VM API not ready for extraction")
-
-    background_tasks.add_task(_run_extraction, meeting_id)
-    return {"status": "accepted", "meeting_id": meeting_id}
-
-
-async def _run_extraction(meeting_id: str) -> None:
-    """Background task: fetch transcript from Fireflies + run extraction pipeline."""
-    if not FIREFLIES_API_KEY:
-        logger.error("FIREFLIES_API_KEY not set — cannot fetch transcript for %s", meeting_id)
-        return
-    if pool is None:
-        logger.error("DB pool not initialised — cannot run extraction for %s", meeting_id)
-        return
-    client = FirefliesClient(FIREFLIES_API_KEY)
-    try:
-        transcript = await client.fetch_transcript(meeting_id)
-
-        # Format sentences into plain text
-        transcript_text = "\n".join(
-            f"{s.speaker_name}: {s.text}" for s in transcript.sentences
-        )
-        # First participant is typically the interviewee
-        participant_name = transcript.participants[0] if transcript.participants else "Unknown"
-        meeting_date = transcript.date[:10] if transcript.date else None
-
-        result = await process_discovery_meeting(
-            pool=pool,
-            transcript_text=transcript_text,
-            participant_name=participant_name,
-            meeting_title=transcript.title,
-            meeting_date=meeting_date,
-            fireflies_meeting_id=meeting_id,
-        )
-        logger.info("Extraction complete for %s: %s", meeting_id, result)
-    except Exception as exc:
-        logger.exception("Extraction failed for meeting %s", meeting_id)
-        import notifier
-        try:
-            await notifier.send_error(
-                "Fireflies extraction failed",
-                f"{type(exc).__name__}: {exc}",
-                meeting_id=meeting_id,
-            )
-        except Exception:
-            logger.exception("Failed to send Telegram alert for %s", meeting_id)
-    finally:
-        await client.aclose()
 
 
 if __name__ == "__main__":

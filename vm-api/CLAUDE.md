@@ -28,12 +28,13 @@ gcloud compute ssh paperclip-vm --zone=us-central1-f -- 'sudo systemctl restart 
 | POST | /api/leads | Demo form lead capture (broccolli.ai) |
 | PATCH | /api/leads/{id} | Update lead pillar |
 | GET | /api/interviews | List recent interviews |
-| POST | /webhook/fireflies | Fireflies extraction trigger (from Windmill) |
+| POST | /api/pipeline/run | Full meeting pipeline (Windmill calls this on Fireflies events) |
+| POST | /api/digest/run | Weekly aggregate patterns analysis |
 
 ## Key Constraints
 
-- **Auth**: `/webhook/fireflies` requires `Authorization: Bearer <VM_API_SECRET>`
-- **Env vars**: `DATABASE_URL`, `FIREFLIES_API_KEY`, `VM_API_SECRET`, `TEABLE_EMAIL`, `TEABLE_PASSWORD`
+- **Auth**: All `/api/*` and `/health/full` endpoints require `Authorization: Bearer <VM_API_SECRET>`
+- **Env vars**: `DATABASE_URL`, `FIREFLIES_API_KEY`, `VM_API_SECRET`, `TEABLE_EMAIL`, `TEABLE_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - **Port 3101**: GCP firewall already allows this — no changes needed
-- **Background tasks**: Fireflies extraction runs async after 202 response; check VM logs for results
+- **Pipeline execution**: `run_meeting_pipeline` runs synchronously in the FastAPI threadpool; Windmill holds the connection until the structured per-step result is returned
 - **Discovery extractor**: `discovery_extractor.py` and `teable_client.py` are copied here — keep in sync with `discovery/vm_modules/` when that changes
