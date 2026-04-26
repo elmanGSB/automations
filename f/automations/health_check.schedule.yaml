@@ -1,7 +1,7 @@
-summary: "VM health check — every 30 minutes"
+summary: "VM health check — once daily at 13:00 UTC"
 script_path: "f/automations/health_check"
 is_flow: true
-schedule: "0 */30 * * * *"
+schedule: "0 0 13 * * *"
 timezone: UTC
 args: {}
 enabled: true
