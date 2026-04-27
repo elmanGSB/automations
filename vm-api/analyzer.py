@@ -43,7 +43,11 @@ For each category, provide:
 
 Always use direct quotes rather than paraphrasing. Show frequency — note how many people mentioned similar things. Provide context for when/why quotes were made. Connect categories — show relationships between pain points and solutions. Flag contradictions when interviewees disagree. Prioritize insights revealing genuine user needs, strong emotions, and innovation opportunities."""
 
-PROMPT_NOVEL = _SPEAKER_INSTRUCTION + """Analyze the newest interview transcript against all previous interviews to identify completely novel insights, pain points, behaviors, emotions, and quotes that have never appeared before. Focus on genuinely new information, not variations of existing themes.
+PROMPT_NOVEL_TEMPLATE = _SPEAKER_INSTRUCTION + """Analyze ONLY the interview titled '{title}' from {date} between {participants} against all OTHER transcripts in this notebook to identify completely novel insights, pain points, behaviors, emotions, and quotes that have never appeared in those OTHER transcripts. Focus on genuinely new information from the named transcript, not variations of existing themes.
+
+DO NOT extract insights from any other transcript — those are the comparison baseline only. Every quote and insight you return MUST come from the transcript titled '{title}'.
+
+If you cannot find a transcript matching '{title}' from {date} in this notebook, return only the literal text SOURCE_NOT_FOUND on a single line and nothing else.
 
 Analysis Categories:
 
@@ -107,11 +111,45 @@ def query_notebook(notebook_id: str, prompt: str, timeout: float = 180) -> str:
     return answer.strip()
 
 
-def analyze_novel(notebook_id: str) -> NovelResult:
-    """Run only Prompt 2 (novel insights) — used per meeting."""
-    logger.info("Running novel insights analysis on notebook %s", notebook_id)
-    novel = query_notebook(notebook_id, PROMPT_NOVEL)
-    return NovelResult(novel=novel)
+def analyze_novel(
+    notebook_id: str,
+    title: str,
+    date: str | None = None,
+    participants: list[str] | None = None,
+) -> NovelResult:
+    """Per-meeting novel insights, scoped to ONE named transcript.
+
+    Names the target transcript explicitly in the prompt so NLM doesn't
+    pick its own "newest" by upload timestamp — which leaks insights
+    from other recently-uploaded transcripts during recovery / backlog
+    windows (the David/Jessy email mash-up of Apr 24).
+
+    If NLM returns the SOURCE_NOT_FOUND sentinel, we fall back to passing
+    the response through with a heads-up prefix rather than dropping the
+    email — that way a brittle prompt match doesn't silently kill recap
+    delivery. We log a warning so we can spot if it happens often.
+    """
+    prompt = PROMPT_NOVEL_TEMPLATE.format(
+        title=title or "(untitled)",
+        date=date or "unknown date",
+        participants=", ".join(participants) if participants else "unknown",
+    )
+    logger.info(
+        "Running novel insights analysis on notebook %s for '%s' (%s)",
+        notebook_id, title, date,
+    )
+    raw = query_notebook(notebook_id, prompt)
+    if raw.strip() == "SOURCE_NOT_FOUND":
+        logger.warning(
+            "NLM returned SOURCE_NOT_FOUND for '%s' (%s) in notebook %s — "
+            "falling through with empty novel; check prompt scoping",
+            title, date, notebook_id,
+        )
+        return NovelResult(
+            novel=f"⚠️ Note: NotebookLM could not confidently scope this analysis to '{title}'. "
+                  f"Treat the insights below with caution.\n\n{raw}"
+        )
+    return NovelResult(novel=raw)
 
 
 def analyze_patterns(notebook_id: str) -> str:
