@@ -1,0 +1,2 @@
+description: Hitokiri_nic_bot — error alerts. Value managed out-of-band (rotated via deploy.yml from GitHub secrets).
+is_secret: true
