@@ -73,12 +73,6 @@ Be rigorous — only flag truly novel information. Always cite specific evidence
 
 
 @dataclass
-class AnalysisResult:
-    patterns: str
-    novel: str
-
-
-@dataclass
 class NovelResult:
     novel: str
 
@@ -158,9 +152,3 @@ def analyze_patterns(notebook_id: str) -> str:
     return query_notebook(notebook_id, PROMPT_PATTERNS)
 
 
-def analyze_notebook(notebook_id: str) -> AnalysisResult:
-    """Run both prompts — kept for backwards compatibility."""
-    return AnalysisResult(
-        patterns=analyze_patterns(notebook_id),
-        novel=analyze_novel(notebook_id).novel,
-    )
