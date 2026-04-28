@@ -49,10 +49,10 @@ def test_analyze_novel_returns_normal_result_on_clean_response():
     assert "could not confidently scope" not in result.novel
 
 
-def test_analyze_novel_falls_through_with_warning_on_source_not_found():
-    """When NLM can't scope, we still pass the response through with a
-    cautionary prefix rather than dropping the email entirely. Logs a
-    warning so we can spot recurrence."""
+def test_analyze_novel_returns_user_facing_notice_on_source_not_found():
+    """When NLM can't scope, return a clean user-facing notice — never the
+    raw SOURCE_NOT_FOUND sentinel — and name the meeting so the user knows
+    which transcript failed. Logs a warning so we can spot recurrence."""
     from analyzer import analyze_novel
 
     with patch("analyzer.query_notebook", return_value="SOURCE_NOT_FOUND"):
@@ -63,8 +63,10 @@ def test_analyze_novel_falls_through_with_warning_on_source_not_found():
             participants=[],
         )
 
-    assert "could not confidently scope" in result.novel
     assert "Ghost Meeting" in result.novel
+    assert "could not locate" in result.novel
+    # The internal sentinel must not leak into user-facing copy.
+    assert "SOURCE_NOT_FOUND" not in result.novel
 
 
 def test_analyze_novel_handles_missing_optional_args():

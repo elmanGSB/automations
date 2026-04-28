@@ -136,12 +136,15 @@ def analyze_novel(
     if raw.strip() == "SOURCE_NOT_FOUND":
         logger.warning(
             "NLM returned SOURCE_NOT_FOUND for '%s' (%s) in notebook %s — "
-            "falling through with empty novel; check prompt scoping",
+            "returning a user-facing notice; check prompt scoping",
             title, date, notebook_id,
         )
         return NovelResult(
-            novel=f"⚠️ Note: NotebookLM could not confidently scope this analysis to '{title}'. "
-                  f"Treat the insights below with caution.\n\n{raw}"
+            novel=(
+                f"⚠️ NotebookLM could not locate the transcript titled '{title}' "
+                f"({date}) in this notebook. No insights were extracted for this "
+                "meeting. The pipeline will retry on the next webhook delivery."
+            )
         )
     return NovelResult(novel=raw)
 
