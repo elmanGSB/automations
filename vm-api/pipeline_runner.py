@@ -245,7 +245,12 @@ def _run_pipeline(
 
         # Step 7: Query novel insights
         try:
-            analysis = analyze_novel(notebook_id)
+            analysis = analyze_novel(
+                notebook_id,
+                title=transcript.title,
+                date=_meeting_date(transcript.date),
+                participants=list(transcript.participants or []),
+            )
             result["steps"]["nlm_analysis"] = {
                 "status": "ok",
                 "novel_length": len(analysis.novel),
