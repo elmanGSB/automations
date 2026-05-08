@@ -9,3 +9,8 @@ __pycache__/
 dist/
 .venv/
 /tmp/
+
+# Windmill resource holds a signing secret in plaintext (signature_auth schema does
+# not mark secret_key as a secret). Excluded from wmill sync via wmill.yaml; this
+# is the belt-and-suspenders to keep it out of git if pulled by accident.
+u/admin/fireflies_webhook_signature.resource.yaml

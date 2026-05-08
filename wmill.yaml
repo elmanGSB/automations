@@ -3,6 +3,13 @@ includes:
   - f/**
   - s/**
   - u/**
+excludes:
+  # Resource holds the Fireflies x-hub-signature signing secret in its secret_key
+  # field (signature_auth schema does not mark it as a secret, so --skip-secrets
+  # cannot mask it). Manage manually in Windmill UI; the trigger config in
+  # f/discovery/fireflies_http.http_trigger.yaml references it by path, which is
+  # enough to surface drift if the resource path or auth method changes.
+  - u/admin/fireflies_webhook_signature.resource.yaml
 skipSecrets: true
 includeSchedules: true
 includeTriggers: true

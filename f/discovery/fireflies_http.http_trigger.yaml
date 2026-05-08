@@ -1,7 +1,8 @@
 summary: Fireflies webhook
-description: Receives Fireflies meeting.transcribed events.
-authentication_method: none
-authentication_resource_path: null
+description: Receives Fireflies meeting.transcribed events. x-hub-signature
+  SHA-256 HMAC verified.
+authentication_method: signature
+authentication_resource_path: u/admin/fireflies_webhook_signature
 http_method: post
 is_flow: true
 is_static_website: false
