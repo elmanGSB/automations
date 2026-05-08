@@ -5,3 +5,4 @@ includes:
   - u/**
 skipSecrets: true
 includeSchedules: true
+includeTriggers: true
