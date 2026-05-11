@@ -12,8 +12,10 @@ Environment=HOME=/home/elmanamador
 # claude CLI is at /usr/bin/claude on the VM; ~/.local/bin first preserves
 # user-shadowed installs if elmanamador ever puts a newer build there.
 Environment=PATH=/home/elmanamador/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# Concurrency cap on parallel `claude -p` invocations. Tune as needed.
-Environment=CLAUDE_PROXY_MAX_CONCURRENT=3
+# Concurrency cap on parallel `claude -p` invocations. Bumped 3 → 20 to
+# support burst backfills (e.g., re-firing the last 3 weeks of meetings
+# through the workflow without serializing through a 3-wide queue).
+Environment=CLAUDE_PROXY_MAX_CONCURRENT=20
 ExecStart=/usr/bin/python3 /home/elmanamador/automations/claude-proxy.py --port 8199
 Restart=on-failure
 RestartSec=5
