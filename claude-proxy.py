@@ -92,6 +92,10 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         if cli_model:
             cmd.extend(["--model", cli_model])
 
+        # Upstream failures (rc != 0, timeout, claude CLI missing) MUST surface
+        # as HTTP 5xx so LiteLLM applies its retry/fallback policy. Returning
+        # 200 with the error string in content makes the caller think the LLM
+        # said "Error: ..." and parse it as a real completion — silent failure.
         try:
             result = subprocess.run(
                 cmd,
@@ -100,15 +104,31 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
                 text=True,
                 timeout=180,
             )
-            response_text = result.stdout.strip()
-            if result.returncode != 0:
-                err = result.stderr.strip()[:500]
-                print(f"[proxy] claude error (rc={result.returncode}): {err}", file=sys.stderr)
-                response_text = f"Error from Claude CLI: {err}"
         except subprocess.TimeoutExpired:
-            response_text = "Error: Claude CLI timed out after 180s"
+            self._send_anthropic_error(504, "timeout_error",
+                                       "Claude CLI timed out after 180s")
+            return
         except FileNotFoundError:
-            response_text = "Error: 'claude' CLI not found in PATH"
+            self._send_anthropic_error(500, "api_error",
+                                       "'claude' CLI not found in PATH")
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._send_anthropic_error(500, "api_error",
+                                       f"subprocess error: {exc}")
+            return
+
+        if result.returncode != 0:
+            err = result.stderr.strip()[:500]
+            print(f"[proxy] claude error (rc={result.returncode}): {err}", file=sys.stderr)
+            self._send_anthropic_error(502, "api_error",
+                                       f"claude CLI exited {result.returncode}: {err}")
+            return
+
+        response_text = result.stdout.strip()
+        if not response_text:
+            self._send_anthropic_error(502, "api_error",
+                                       "claude CLI returned empty stdout")
+            return
 
         response = {
             "id": f"msg_{uuid.uuid4().hex[:24]}",
@@ -121,6 +141,15 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
             "usage": {"input_tokens": 0, "output_tokens": 0},
         }
         self._send_json(200, response)
+
+    def _send_anthropic_error(self, status, error_type, message):
+        # Anthropic error envelope — LiteLLM's anthropic provider parses this
+        # shape and surfaces it as the matching exception class, which triggers
+        # retry_policy + default_fallbacks correctly.
+        self._send_json(status, {
+            "type": "error",
+            "error": {"type": error_type, "message": message},
+        })
 
     def _send_json(self, status, payload):
         body = json.dumps(payload).encode()
