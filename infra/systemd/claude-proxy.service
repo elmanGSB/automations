@@ -6,8 +6,14 @@ After=network.target
 Type=simple
 User=elmanamador
 WorkingDirectory=/home/elmanamador/automations
-# claude CLI lives in ~/.local/bin for the elmanamador user (Anthropic install path).
+# HOME is required: claude CLI reads its OAuth credentials from $HOME/.claude/.
+# systemd does NOT set HOME from User= unless we say so.
+Environment=HOME=/home/elmanamador
+# claude CLI is at /usr/bin/claude on the VM; ~/.local/bin first preserves
+# user-shadowed installs if elmanamador ever puts a newer build there.
 Environment=PATH=/home/elmanamador/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Concurrency cap on parallel `claude -p` invocations. Tune as needed.
+Environment=CLAUDE_PROXY_MAX_CONCURRENT=3
 ExecStart=/usr/bin/python3 /home/elmanamador/automations/claude-proxy.py --port 8199
 Restart=on-failure
 RestartSec=5

@@ -22,9 +22,10 @@ model_list:
   - model_name: claude-sonnet
     litellm_params:
       model: anthropic/claude-sonnet-4-6
-      # 172.18.0.1 is the gateway of the `paperclip_default` docker network.
-      # The litellm container reaches the VM host (where claude-proxy listens
-      # on :8199) via this IP. Verify with:
+      # api_base points at the VM host where claude-proxy listens on :8199.
+      # 172.18.0.1 is the CURRENT paperclip_default network gateway; deploy.yml
+      # resolves the live gateway at deploy time and sed-substitutes it here,
+      # so this default only matters for local testing. Verify with:
       #   docker network inspect paperclip_default --format '{{json .IPAM.Config}}'
       api_base: http://172.18.0.1:8199
       api_key: dummy-subscription-proxy
@@ -32,9 +33,10 @@ model_list:
   - model_name: claude-haiku
     litellm_params:
       model: anthropic/claude-haiku-4-5
-      # 172.18.0.1 is the gateway of the `paperclip_default` docker network.
-      # The litellm container reaches the VM host (where claude-proxy listens
-      # on :8199) via this IP. Verify with:
+      # api_base points at the VM host where claude-proxy listens on :8199.
+      # 172.18.0.1 is the CURRENT paperclip_default network gateway; deploy.yml
+      # resolves the live gateway at deploy time and sed-substitutes it here,
+      # so this default only matters for local testing. Verify with:
       #   docker network inspect paperclip_default --format '{{json .IPAM.Config}}'
       api_base: http://172.18.0.1:8199
       api_key: dummy-subscription-proxy

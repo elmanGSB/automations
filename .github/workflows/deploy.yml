@@ -264,32 +264,16 @@ jobs:
             exit 1
           fi
 
-      # ---- LLM gateway: LiteLLM config + Claude proxy ----
+      # ---- LLM gateway: Claude proxy + LiteLLM config ----
+      # Order: install claude-proxy FIRST and verify healthy, then publish the
+      # new LiteLLM config that routes to it. The reverse order leaves a window
+      # where LiteLLM has the new claude-* routes but the proxy isn't up;
+      # default_fallbacks cover classification but route-specific callers fail.
+      #
       # LiteLLM config is bind-mounted into the litellm container; a `docker
-      # restart` makes it re-read. The claude-proxy.service wraps `claude -p`
-      # so LiteLLM can route Anthropic-format requests through the Max
+      # restart` makes it re-read. claude-proxy.service wraps `claude -p` so
+      # LiteLLM can route Anthropic-format requests through the Max
       # subscription at $0/token.
-
-      - name: Sync LiteLLM config
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'set -e; \
-             SRC=/home/elmanamador/automations/infra/litellm/config.yaml; \
-             DEST=/home/elmanamador/litellm/config.yaml; \
-             if [ ! -f "$SRC" ]; then echo "FATAL: $SRC missing"; exit 1; fi; \
-             install -m 644 "$SRC" "$DEST"; \
-             echo "LiteLLM config installed at $DEST"'
-
-      - name: Restart LiteLLM container to pick up config
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'set -e; \
-             if ! docker ps --format "{{.Names}}" | grep -qx litellm; then \
-               echo "FATAL: litellm container is not running — refusing to restart what is not up"; \
-               exit 1; \
-             fi; \
-             docker restart litellm; \
-             echo "litellm restarted"'
 
       - name: Install claude-proxy systemd unit from repo
         run: |
@@ -322,6 +306,35 @@ jobs:
                sudo journalctl -u claude-proxy.service -n 30 --no-pager; \
                exit 1; \
              fi'
+
+      - name: Sync LiteLLM config (templating actual paperclip_default gateway IP)
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             SRC=/home/elmanamador/automations/infra/litellm/config.yaml; \
+             DEST=/home/elmanamador/litellm/config.yaml; \
+             if [ ! -f "$SRC" ]; then echo "FATAL: $SRC missing"; exit 1; fi; \
+             # Resolve the current paperclip_default network gateway. The committed \
+             # config has 172.18.0.1 as a default; if Docker reassigned a different \
+             # subnet after a network teardown, this substitutes the live value. \
+             GW=$(docker network inspect paperclip_default --format "{{(index .IPAM.Config 0).Gateway}}"); \
+             if [ -z "$GW" ]; then echo "FATAL: could not resolve paperclip_default gateway"; exit 1; fi; \
+             echo "paperclip_default gateway: $GW"; \
+             install -m 644 "$SRC" "$DEST"; \
+             sed -i "s|http://172\\.18\\.0\\.1:8199|http://${GW}:8199|g" "$DEST"; \
+             grep -q "http://${GW}:8199" "$DEST" || { echo "FATAL: gateway substitution did not apply"; exit 1; }; \
+             echo "LiteLLM config installed at $DEST with api_base=http://${GW}:8199"'
+
+      - name: Restart LiteLLM container to pick up config
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             if ! docker ps --format "{{.Names}}" | grep -qx litellm; then \
+               echo "FATAL: litellm container is not running — refusing to restart what is not up"; \
+               exit 1; \
+             fi; \
+             docker restart litellm; \
+             echo "litellm restarted"'
 
       - name: Health check LiteLLM gateway
         run: |

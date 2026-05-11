@@ -22,8 +22,10 @@ externally, so this stays VM-internal.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -39,6 +41,12 @@ MODEL_ALIASES = {
     "claude-opus-4-7": "opus",
     "claude-opus": "opus",
 }
+
+# Bounded concurrent claude-CLI invocations. Claude Code Max has an undocumented
+# per-account concurrency ceiling; bursting past it triggers transient 5xx
+# from the subscription side. Default 3 is conservative; tune via env.
+_CLAUDE_CONCURRENCY = int(os.environ.get("CLAUDE_PROXY_MAX_CONCURRENT", "3"))
+_claude_semaphore = threading.BoundedSemaphore(_CLAUDE_CONCURRENCY)
 
 
 class ClaudeProxyHandler(BaseHTTPRequestHandler):
@@ -96,26 +104,40 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         # as HTTP 5xx so LiteLLM applies its retry/fallback policy. Returning
         # 200 with the error string in content makes the caller think the LLM
         # said "Error: ..." and parse it as a real completion — silent failure.
+        #
+        # Acquire the semaphore non-blockingly so a burst of concurrent
+        # webhooks doesn't infinitely queue and pile up subscription quota
+        # usage. Caller sees 429 → LiteLLM retries with backoff per policy.
+        if not _claude_semaphore.acquire(blocking=False):
+            self._send_anthropic_error(429, "rate_limit_error",
+                                       f"claude-proxy at concurrency cap ({_CLAUDE_CONCURRENCY})")
+            return
+
         try:
-            result = subprocess.run(
-                cmd,
-                input=full_prompt,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-        except subprocess.TimeoutExpired:
-            self._send_anthropic_error(504, "timeout_error",
-                                       "Claude CLI timed out after 180s")
-            return
-        except FileNotFoundError:
-            self._send_anthropic_error(500, "api_error",
-                                       "'claude' CLI not found in PATH")
-            return
-        except Exception as exc:  # noqa: BLE001
-            self._send_anthropic_error(500, "api_error",
-                                       f"subprocess error: {exc}")
-            return
+            try:
+                result = subprocess.run(
+                    cmd,
+                    input=full_prompt,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except subprocess.TimeoutExpired:
+                # 408 maps to LiteLLM's TimeoutErrorRetries (504 gets caught
+                # by InternalServerErrorRetries which is the wrong bucket).
+                self._send_anthropic_error(408, "timeout_error",
+                                           "Claude CLI timed out after 180s")
+                return
+            except FileNotFoundError:
+                self._send_anthropic_error(500, "api_error",
+                                           "'claude' CLI not found in PATH")
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_anthropic_error(500, "api_error",
+                                           f"subprocess error: {exc}")
+                return
+        finally:
+            _claude_semaphore.release()
 
         if result.returncode != 0:
             err = result.stderr.strip()[:500]
