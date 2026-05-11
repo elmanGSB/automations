@@ -246,16 +246,97 @@ jobs:
              sudo systemctl start vm-api; \
              trap - EXIT'
 
-      - name: Health check
+      - name: Health check vm-api
         run: |
           sleep 5
+          HEALTHY=0
           for i in {1..10}; do
             if curl -sf http://${{ secrets.DEPLOY_HOST }}:3101/health; then
               echo "✓ VM API healthy"
-              exit 0
+              HEALTHY=1
+              break
             fi
             echo "Attempt $i/10 — waiting for service..."
             sleep 3
           done
-          echo "✗ Health check failed"
-          exit 1
+          if [ "$HEALTHY" != "1" ]; then
+            echo "✗ vm-api health check failed"
+            exit 1
+          fi
+
+      # ---- LLM gateway: LiteLLM config + Claude proxy ----
+      # LiteLLM config is bind-mounted into the litellm container; a `docker
+      # restart` makes it re-read. The claude-proxy.service wraps `claude -p`
+      # so LiteLLM can route Anthropic-format requests through the Max
+      # subscription at $0/token.
+
+      - name: Sync LiteLLM config
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             SRC=/home/elmanamador/automations/infra/litellm/config.yaml; \
+             DEST=/home/elmanamador/litellm/config.yaml; \
+             if [ ! -f "$SRC" ]; then echo "FATAL: $SRC missing"; exit 1; fi; \
+             install -m 644 "$SRC" "$DEST"; \
+             echo "LiteLLM config installed at $DEST"'
+
+      - name: Restart LiteLLM container to pick up config
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             if ! docker ps --format "{{.Names}}" | grep -qx litellm; then \
+               echo "FATAL: litellm container is not running — refusing to restart what is not up"; \
+               exit 1; \
+             fi; \
+             docker restart litellm; \
+             echo "litellm restarted"'
+
+      - name: Install claude-proxy systemd unit from repo
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'set -e; \
+             UNIT=/etc/systemd/system/claude-proxy.service; \
+             SRC=/home/elmanamador/automations/infra/systemd/claude-proxy.service; \
+             if [ ! -f "$SRC" ]; then echo "FATAL: $SRC missing"; exit 1; fi; \
+             sudo install -m 644 "$SRC" "$UNIT"; \
+             sudo systemctl daemon-reload; \
+             sudo systemctl enable claude-proxy.service; \
+             sudo systemctl restart claude-proxy.service; \
+             echo "claude-proxy.service installed and restarted"'
+
+      - name: Health check claude-proxy
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'HEALTHY=0; \
+             for i in 1 2 3 4 5 6 7 8 9 10; do \
+               if curl -sf http://127.0.0.1:8199/health >/dev/null; then \
+                 echo "✓ claude-proxy healthy"; \
+                 HEALTHY=1; \
+                 break; \
+               fi; \
+               echo "Attempt $i/10 — waiting for claude-proxy..."; \
+               sleep 2; \
+             done; \
+             if [ "$HEALTHY" != "1" ]; then \
+               echo "✗ claude-proxy health check failed"; \
+               sudo journalctl -u claude-proxy.service -n 30 --no-pager; \
+               exit 1; \
+             fi'
+
+      - name: Health check LiteLLM gateway
+        run: |
+          HEALTHY=0
+          for i in {1..10}; do
+            if curl -sf http://${{ secrets.DEPLOY_HOST }}:4000/health/liveliness >/dev/null \
+               || curl -sf http://${{ secrets.DEPLOY_HOST }}:4000/health >/dev/null; then
+              echo "✓ LiteLLM gateway healthy"
+              HEALTHY=1
+              break
+            fi
+            echo "Attempt $i/10 — waiting for LiteLLM..."
+            sleep 3
+          done
+          if [ "$HEALTHY" != "1" ]; then
+            echo "✗ LiteLLM health check failed"
+            exit 1
+          fi

@@ -1,0 +1,16 @@
+[Unit]
+Description=Claude Code CLI HTTP proxy (Anthropic Messages API on :8199)
+After=network.target
+
+[Service]
+Type=simple
+User=elmanamador
+WorkingDirectory=/home/elmanamador/automations
+# claude CLI lives in ~/.local/bin for the elmanamador user (Anthropic install path).
+Environment=PATH=/home/elmanamador/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/python3 /home/elmanamador/automations/claude-proxy.py --port 8199
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

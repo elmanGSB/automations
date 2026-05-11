@@ -1,0 +1,70 @@
+# LiteLLM gateway config — deployed to /home/elmanamador/litellm/config.yaml
+# Container picks this up via bind mount; `docker restart litellm` re-reads it.
+#
+# Master key + DB URL + provider keys are passed as env vars at container start
+# (see docker run args on the VM). We don't manage them here.
+
+model_list:
+  # ---- Gemini (Google AI Studio) ----
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-3-1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite-preview
+      api_key: os.environ/GEMINI_API_KEY
+
+  # ---- Claude via Max-subscription proxy (claude-proxy.service on VM host) ----
+  # The proxy wraps `claude -p` so calls cost $0 against Elman's Max plan.
+  # Reachable from the litellm container via the docker bridge gateway.
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      # 172.18.0.1 is the gateway of the `paperclip_default` docker network.
+      # The litellm container reaches the VM host (where claude-proxy listens
+      # on :8199) via this IP. Verify with:
+      #   docker network inspect paperclip_default --format '{{json .IPAM.Config}}'
+      api_base: http://172.18.0.1:8199
+      api_key: dummy-subscription-proxy
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      # 172.18.0.1 is the gateway of the `paperclip_default` docker network.
+      # The litellm container reaches the VM host (where claude-proxy listens
+      # on :8199) via this IP. Verify with:
+      #   docker network inspect paperclip_default --format '{{json .IPAM.Config}}'
+      api_base: http://172.18.0.1:8199
+      api_key: dummy-subscription-proxy
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  proxy_batch_write_at: 60
+  database_connection_pool_limit: 5
+  allow_requests_on_db_unavailable: true
+  background_health_checks: true
+  health_check_interval: 300
+
+litellm_settings:
+  set_verbose: false
+  json_logs: true
+  request_timeout: 600
+  num_retries: 3
+  allowed_fails: 3
+  cooldown_time: 30
+  # Fall back to Gemini if Claude proxy is down (claude-proxy.service down,
+  # subscription expired, etc.) so n8n classification keeps working.
+  default_fallbacks: [gemini-3-1-flash-lite]
+
+router_settings:
+  routing_strategy: simple-shuffle
+  retry_policy:
+    AuthenticationErrorRetries: 0
+    BadRequestErrorRetries: 0
+    ContentPolicyViolationErrorRetries: 0
+    InternalServerErrorRetries: 2
+    RateLimitErrorRetries: 3
+    TimeoutErrorRetries: 1
