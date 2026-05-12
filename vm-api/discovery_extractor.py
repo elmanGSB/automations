@@ -16,7 +16,8 @@ from datetime import date as date_type
 import asyncpg
 import httpx
 
-from teable_client import TeableClient
+from notifier import send_error
+from teable_client import TeableAuthError, TeableClient
 
 logger = logging.getLogger(__name__)
 

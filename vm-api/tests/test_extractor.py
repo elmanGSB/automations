@@ -217,3 +217,48 @@ async def test_teable_timeout_is_non_fatal():
 
     # Pipeline must succeed despite Teable timeout
     assert result["interview_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_teable_auth_error_pages_telegram_and_continues():
+    """TeableAuthError must trigger send_error and not propagate.
+
+    Regression: an earlier revision referenced TeableAuthError/send_error
+    without importing them, which turned the auth-failure branch into a
+    silent NameError instead of the intended Telegram alert.
+    """
+    from discovery_extractor import TeableAuthError
+
+    pool, _ = make_mock_pool()
+    extraction = {
+        "interviewee_type": "distributor",
+        "insights": [],
+        "clusters": [],
+        "summary": "",
+        "participant_role": None,
+        "company_name": None,
+        "product_categories": [],
+        "behavioral_segment": None,
+        "demographics": None,
+    }
+
+    async def _raise_auth(*_a, **_kw):
+        raise TeableAuthError("TEABLE_TOKEN rejected")
+
+    with patch("discovery_extractor.asyncio.wait_for", side_effect=_raise_auth), \
+         patch("discovery_extractor.TeableClient"), \
+         patch("discovery_extractor.send_error", new=AsyncMock()) as mock_alert:
+        result = await store_extraction_fn(
+            pool=pool,
+            extraction=extraction,
+            participant_name="Test",
+            interview_date=date(2026, 4, 16),
+            transcript_text="text",
+            fireflies_meeting_id="ff-123",
+        )
+
+    mock_alert.assert_awaited_once()
+    title_arg = mock_alert.await_args.args[0]
+    assert "Teable" in title_arg and "auth" in title_arg.lower()
+    # Pipeline must succeed despite the auth failure
+    assert result["interview_id"] == 42
