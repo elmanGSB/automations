@@ -50,12 +50,14 @@ def main() -> dict:
     if status == "drift":
         missing = list(report.get("missing_in_teable", []))
         extra = list(report.get("extra_in_teable", []))
+        duplicates = list(report.get("duplicate_in_teable", []))
         message = (
             "<b>&#x26A0;&#xFE0F; Teable / Postgres drift</b>\n\n"
             f"Postgres: <code>{report.get('postgres_interviews', '?')}</code>\n"
             f"Teable: <code>{report.get('teable_interviews', '?')}</code>\n"
             f"Missing in Teable ({len(missing)}): {_format_ids(missing)}\n"
-            f"Extra in Teable ({len(extra)}): {_format_ids(extra)}"
+            f"Extra in Teable ({len(extra)}): {_format_ids(extra)}\n"
+            f"Duplicate in Teable ({len(duplicates)}): {_format_ids(duplicates)}"
         )
     else:
         # unreachable / error / unknown

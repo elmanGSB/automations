@@ -146,6 +146,12 @@ async def health_teable_sync():
               SELECT "Fireflies_ID" AS fireflies_meeting_id
               FROM {TEABLE_INTERVIEWS_TABLE}
               WHERE "Fireflies_ID" IS NOT NULL AND "Fireflies_ID" <> ''
+            ),
+            teable_dups AS (
+              SELECT fireflies_meeting_id
+              FROM teable
+              GROUP BY fireflies_meeting_id
+              HAVING COUNT(*) > 1
             )
             SELECT
               (SELECT COUNT(*) FROM pg)::int AS pg_count,
@@ -156,10 +162,15 @@ async def health_teable_sync():
                 ARRAY[]::text[]
               ) AS missing_in_teable,
               COALESCE(
-                (SELECT array_agg(fireflies_meeting_id ORDER BY fireflies_meeting_id)
+                (SELECT array_agg(DISTINCT fireflies_meeting_id ORDER BY fireflies_meeting_id)
                  FROM teable WHERE fireflies_meeting_id NOT IN (SELECT fireflies_meeting_id FROM pg)),
                 ARRAY[]::text[]
-              ) AS extra_in_teable
+              ) AS extra_in_teable,
+              COALESCE(
+                (SELECT array_agg(fireflies_meeting_id ORDER BY fireflies_meeting_id)
+                 FROM teable_dups),
+                ARRAY[]::text[]
+              ) AS duplicate_in_teable
             """
         )
     except asyncpg.exceptions.UndefinedTableError:
@@ -175,13 +186,15 @@ async def health_teable_sync():
 
     missing = list(row["missing_in_teable"])
     extra = list(row["extra_in_teable"])
-    in_sync = not missing and not extra
+    duplicates = list(row["duplicate_in_teable"])
+    in_sync = not missing and not extra and not duplicates
     return {
         "status": "ok" if in_sync else "drift",
         "postgres_interviews": row["pg_count"],
         "teable_interviews": row["teable_count"],
         "missing_in_teable": missing,
         "extra_in_teable": extra,
+        "duplicate_in_teable": duplicates,
     }
 
 
