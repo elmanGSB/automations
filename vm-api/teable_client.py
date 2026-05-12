@@ -1,77 +1,88 @@
 """
 Teable API client for dual-write from the discovery pipeline.
-Writes records to Teable tables after Postgres inserts so data
-appears in both the source-of-truth DB and the Teable UI.
+
+Writes records to Teable tables after Postgres inserts so data appears in
+both the source-of-truth DB and the Teable UI.
+
+Auth: Personal Access Token (Bearer). Set TEABLE_TOKEN in env. The token is
+generated once in the Teable UI (Settings → Personal Access Tokens) and
+must have record|read + record|create scopes on the Interviews DB base.
 """
 
 import json
 import logging
-import http.cookiejar
-import urllib.request
+import os
 import urllib.error
+import urllib.parse
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
-TEABLE_BASE_URL = "http://127.0.0.1:3200"
-TEABLE_EMAIL = "elmanamador52@hotmail.com"
-TEABLE_PASSWORD = "123eamGG!"
+TEABLE_BASE_URL = os.environ.get("TEABLE_BASE_URL", "http://127.0.0.1:3200")
 
-# Teable table IDs (from the "Interviews DB" base)
+# Teable table IDs (from the "Interviews DB" base, bseEuelyInFqZdXNY0D)
 INTERVIEWS_TABLE = "tblINxPc5QnvO3vqogw"
 INSIGHTS_TABLE = "tblx3633BHwOYpZVaPn"
 CLUSTERS_TABLE = "tblXNM3aijcyxGVUpSU"
 
 
-class TeableClient:
-    """Synchronous Teable API client using cookie auth."""
+class TeableAuthError(RuntimeError):
+    """Raised when TEABLE_TOKEN is missing or rejected by Teable."""
 
-    def __init__(self, base_url: str = TEABLE_BASE_URL):
+
+class TeableClient:
+    """Synchronous Teable API client using Personal Access Token (Bearer)."""
+
+    def __init__(self, base_url: str = TEABLE_BASE_URL, token: str | None = None):
         self.base_url = base_url
-        self._cj = http.cookiejar.CookieJar()
-        self._opener = urllib.request.build_opener(
-            urllib.request.HTTPCookieProcessor(self._cj)
-        )
-        self._authenticated = False
+        self._token = token if token is not None else os.environ.get("TEABLE_TOKEN", "")
+        if not self._token:
+            raise TeableAuthError(
+                "TEABLE_TOKEN is not set. Generate a Personal Access Token in the "
+                "Teable UI (Settings → Personal Access Tokens) and add it to the VM .env."
+            )
 
     def _request(self, method: str, path: str, data: dict | None = None) -> dict | None:
         url = f"{self.base_url}{path}"
         body = json.dumps(data).encode() if data else None
         req = urllib.request.Request(url, data=body, method=method)
         req.add_header("Content-Type", "application/json")
-        resp = self._opener.open(req)
+        req.add_header("Authorization", f"Bearer {self._token}")
+        try:
+            resp = urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode(errors="replace")
+            if e.code in (401, 403):
+                raise TeableAuthError(
+                    f"Teable rejected the PAT ({e.code}): {err_body}"
+                ) from e
+            # Re-raise with body so callers see the actual error
+            raise urllib.error.HTTPError(
+                e.url, e.code, f"{e.reason}: {err_body}", e.headers, None
+            ) from e
         raw = resp.read().decode()
         return json.loads(raw) if raw else None
 
-    def login(self) -> None:
-        if self._authenticated:
-            return
-        self._request("POST", "/api/auth/signin", {
-            "email": TEABLE_EMAIL,
-            "password": TEABLE_PASSWORD,
-        })
-        self._authenticated = True
-
     def create_records(self, table_id: str, records: list[dict]) -> int:
-        """Insert records into a Teable table. Returns count created."""
-        self.login()
+        """Insert records into a Teable table. Returns count created.
+
+        Uses fieldKeyType=name so callers can pass user-facing field names
+        (e.g. "Participant") instead of internal field IDs.
+        """
         created = 0
-        # Teable API requires {"records": [{"fields": {...}}, ...]}
-        # Max batch size ~100, we use 10 for safety
+        path = f"/api/table/{table_id}/record?{urllib.parse.urlencode({'fieldKeyType': 'name'})}"
+        # Teable accepts batches up to ~100; we use 10 for safety.
         for i in range(0, len(records), 10):
             batch = [{"fields": r} for r in records[i:i + 10]]
             try:
-                result = self._request("POST", f"/api/table/{table_id}/record", {
-                    "records": batch,
-                })
+                result = self._request("POST", path, {"records": batch})
                 created += len(result.get("records", []))
             except urllib.error.HTTPError as e:
                 logger.warning("Teable batch insert failed: %s", e)
-                # Fall back to one-at-a-time
+                # Fall back to one-at-a-time so a single bad record doesn't lose the batch.
                 for rec in batch:
                     try:
-                        self._request("POST", f"/api/table/{table_id}/record", {
-                            "records": [rec],
-                        })
+                        self._request("POST", path, {"records": [rec]})
                         created += 1
                     except urllib.error.HTTPError as e2:
                         logger.error("Teable single insert failed: %s", e2)

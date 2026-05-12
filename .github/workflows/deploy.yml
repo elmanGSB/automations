@@ -125,6 +125,32 @@ jobs:
           echo "TELEGRAM_* upserted into $ENV"
           REMOTE
 
+      - name: Upsert Teable PAT into VM .env
+        env:
+          TEABLE_TOKEN: ${{ secrets.TEABLE_TOKEN }}
+        run: |
+          if [ -z "$TEABLE_TOKEN" ]; then
+            echo "FATAL: TEABLE_TOKEN secret is unset — discovery pipeline would silently drop Teable dual-writes"
+            exit 1
+          fi
+          echo "::add-mask::$TEABLE_TOKEN"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "TEABLE_TOKEN='$TEABLE_TOKEN' bash -s" <<'REMOTE'
+          set -e
+          ENV=/home/elmanamador/automations/vm-api/.env
+          upsert() {
+            local key="$1" val="$2"
+            if grep -q "^${key}=" "$ENV"; then
+              sudo sed -i "s|^${key}=.*|${key}=${val}|" "$ENV"
+            else
+              echo "${key}=${val}" | sudo tee -a "$ENV" >/dev/null
+            fi
+          }
+          upsert TEABLE_TOKEN "$TEABLE_TOKEN"
+          sudo chmod 600 "$ENV"
+          echo "TEABLE_TOKEN upserted into $ENV"
+          REMOTE
+
       - name: Run database migrations
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \

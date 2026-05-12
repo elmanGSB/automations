@@ -291,6 +291,19 @@ async def store_extraction(
         logger.info("  Teable dual-write: 1 interview, %d insights, %d clusters", insights_count, clusters_count)
     except asyncio.TimeoutError:
         logger.warning("Teable dual-write timed out after 10s (non-fatal)")
+    except TeableAuthError as e:
+        # Auth failures are systemic — every future dual-write will fail until the
+        # PAT is fixed. Log at ERROR and page on Telegram so it doesn't go silent.
+        logger.error("Teable auth failed — discovery pipeline is dropping dual-writes: %s", e)
+        try:
+            await send_error(
+                "Teable dual-write auth failed",
+                str(e),
+                fireflies_meeting_id=fireflies_meeting_id or "",
+                participant_name=participant_name,
+            )
+        except Exception as notify_err:
+            logger.warning("Failed to send Telegram alert for Teable auth error: %s", notify_err)
     except Exception as e:
         logger.warning("Teable dual-write failed (non-fatal): %s", e)
 
