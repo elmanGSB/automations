@@ -220,14 +220,32 @@ async def test_teable_timeout_is_non_fatal():
 
 
 @pytest.mark.asyncio
-async def test_teable_auth_error_pages_telegram_and_continues():
+async def test_teable_auth_error_pages_telegram_and_continues(monkeypatch):
     """TeableAuthError must trigger notifier.send_error and not propagate.
 
     Regression: an earlier revision referenced TeableAuthError/send_error
     without importing them, which turned the auth-failure branch into a
     silent NameError instead of the intended Telegram alert.
+
+    We stub `notifier` directly in sys.modules so the lazy
+    `from notifier import send_error` inside the except branch picks up
+    the stub without ever loading the real notifier (which would pull in
+    config.py and require FIREFLIES_API_KEY at import time, defeating the
+    point of the lazy import).
     """
+    import sys
+    import types
+
     from discovery_extractor import TeableAuthError
+
+    # Pretend FIREFLIES_API_KEY isn't set so the test fails loud if anyone
+    # re-promotes the notifier import back to module top.
+    monkeypatch.delenv("FIREFLIES_API_KEY", raising=False)
+
+    fake_alert = AsyncMock()
+    fake_notifier = types.ModuleType("notifier")
+    fake_notifier.send_error = fake_alert
+    monkeypatch.setitem(sys.modules, "notifier", fake_notifier)
 
     pool, _ = make_mock_pool()
     extraction = {
@@ -245,11 +263,8 @@ async def test_teable_auth_error_pages_telegram_and_continues():
     async def _raise_auth(*_a, **_kw):
         raise TeableAuthError("TEABLE_TOKEN rejected")
 
-    # send_error is imported lazily inside the except branch, so patch it at its
-    # real module path (`notifier.send_error`), not on discovery_extractor.
     with patch("discovery_extractor.asyncio.wait_for", side_effect=_raise_auth), \
-         patch("discovery_extractor.TeableClient"), \
-         patch("notifier.send_error", new=AsyncMock()) as mock_alert:
+         patch("discovery_extractor.TeableClient"):
         result = await store_extraction_fn(
             pool=pool,
             extraction=extraction,
@@ -259,8 +274,8 @@ async def test_teable_auth_error_pages_telegram_and_continues():
             fireflies_meeting_id="ff-123",
         )
 
-    mock_alert.assert_awaited_once()
-    title_arg = mock_alert.await_args.args[0]
+    fake_alert.assert_awaited_once()
+    title_arg = fake_alert.await_args.args[0]
     assert "Teable" in title_arg and "auth" in title_arg.lower()
     # Pipeline must succeed despite the auth failure
     assert result["interview_id"] == 42
