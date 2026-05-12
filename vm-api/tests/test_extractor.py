@@ -221,7 +221,7 @@ async def test_teable_timeout_is_non_fatal():
 
 @pytest.mark.asyncio
 async def test_teable_auth_error_pages_telegram_and_continues():
-    """TeableAuthError must trigger send_error and not propagate.
+    """TeableAuthError must trigger notifier.send_error and not propagate.
 
     Regression: an earlier revision referenced TeableAuthError/send_error
     without importing them, which turned the auth-failure branch into a
@@ -245,9 +245,11 @@ async def test_teable_auth_error_pages_telegram_and_continues():
     async def _raise_auth(*_a, **_kw):
         raise TeableAuthError("TEABLE_TOKEN rejected")
 
+    # send_error is imported lazily inside the except branch, so patch it at its
+    # real module path (`notifier.send_error`), not on discovery_extractor.
     with patch("discovery_extractor.asyncio.wait_for", side_effect=_raise_auth), \
          patch("discovery_extractor.TeableClient"), \
-         patch("discovery_extractor.send_error", new=AsyncMock()) as mock_alert:
+         patch("notifier.send_error", new=AsyncMock()) as mock_alert:
         result = await store_extraction_fn(
             pool=pool,
             extraction=extraction,
@@ -262,3 +264,23 @@ async def test_teable_auth_error_pages_telegram_and_continues():
     assert "Teable" in title_arg and "auth" in title_arg.lower()
     # Pipeline must succeed despite the auth failure
     assert result["interview_id"] == 42
+
+
+def test_discovery_extractor_imports_without_fireflies_env(monkeypatch):
+    """discovery_extractor must be importable in tooling (e.g. backfill_teable.py)
+    that doesn't have FIREFLIES_API_KEY set. Regression: importing `notifier` at
+    module top level pulled in config.py which requires FIREFLIES_API_KEY at
+    import time and would KeyError before the module ever loaded.
+    """
+    import importlib
+    import sys
+
+    monkeypatch.delenv("FIREFLIES_API_KEY", raising=False)
+    # Force a clean import of discovery_extractor (and its transitive deps) under
+    # the cleared env. If anything at module-top-level reads FIREFLIES_API_KEY
+    # strictly, the reload below will raise.
+    for mod in ("discovery_extractor", "notifier", "config"):
+        sys.modules.pop(mod, None)
+    mod = importlib.import_module("discovery_extractor")
+    assert hasattr(mod, "TeableAuthError")
+    assert hasattr(mod, "store_extraction")

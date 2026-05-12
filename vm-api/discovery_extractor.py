@@ -16,7 +16,6 @@ from datetime import date as date_type
 import asyncpg
 import httpx
 
-from notifier import send_error
 from teable_client import TeableAuthError, TeableClient
 
 logger = logging.getLogger(__name__)
@@ -295,8 +294,11 @@ async def store_extraction(
     except TeableAuthError as e:
         # Auth failures are systemic — every future dual-write will fail until the
         # PAT is fixed. Log at ERROR and page on Telegram so it doesn't go silent.
+        # `notifier` is imported lazily so this module stays importable in tooling
+        # (e.g. backfill_teable.py) that doesn't have FIREFLIES_API_KEY in its env.
         logger.error("Teable auth failed — discovery pipeline is dropping dual-writes: %s", e)
         try:
+            from notifier import send_error
             await send_error(
                 "Teable dual-write auth failed",
                 str(e),
