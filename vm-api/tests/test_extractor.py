@@ -217,3 +217,85 @@ async def test_teable_timeout_is_non_fatal():
 
     # Pipeline must succeed despite Teable timeout
     assert result["interview_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_teable_auth_error_pages_telegram_and_continues(monkeypatch):
+    """TeableAuthError must trigger notifier.send_error and not propagate.
+
+    Regression: an earlier revision referenced TeableAuthError/send_error
+    without importing them, which turned the auth-failure branch into a
+    silent NameError instead of the intended Telegram alert.
+
+    We stub `notifier` directly in sys.modules so the lazy
+    `from notifier import send_error` inside the except branch picks up
+    the stub without ever loading the real notifier (which would pull in
+    config.py and require FIREFLIES_API_KEY at import time, defeating the
+    point of the lazy import).
+    """
+    import sys
+    import types
+
+    from discovery_extractor import TeableAuthError
+
+    # Pretend FIREFLIES_API_KEY isn't set so the test fails loud if anyone
+    # re-promotes the notifier import back to module top.
+    monkeypatch.delenv("FIREFLIES_API_KEY", raising=False)
+
+    fake_alert = AsyncMock()
+    fake_notifier = types.ModuleType("notifier")
+    fake_notifier.send_error = fake_alert
+    monkeypatch.setitem(sys.modules, "notifier", fake_notifier)
+
+    pool, _ = make_mock_pool()
+    extraction = {
+        "interviewee_type": "distributor",
+        "insights": [],
+        "clusters": [],
+        "summary": "",
+        "participant_role": None,
+        "company_name": None,
+        "product_categories": [],
+        "behavioral_segment": None,
+        "demographics": None,
+    }
+
+    async def _raise_auth(*_a, **_kw):
+        raise TeableAuthError("TEABLE_TOKEN rejected")
+
+    with patch("discovery_extractor.asyncio.wait_for", side_effect=_raise_auth), \
+         patch("discovery_extractor.TeableClient"):
+        result = await store_extraction_fn(
+            pool=pool,
+            extraction=extraction,
+            participant_name="Test",
+            interview_date=date(2026, 4, 16),
+            transcript_text="text",
+            fireflies_meeting_id="ff-123",
+        )
+
+    fake_alert.assert_awaited_once()
+    title_arg = fake_alert.await_args.args[0]
+    assert "Teable" in title_arg and "auth" in title_arg.lower()
+    # Pipeline must succeed despite the auth failure
+    assert result["interview_id"] == 42
+
+
+def test_discovery_extractor_imports_without_fireflies_env(monkeypatch):
+    """discovery_extractor must be importable in tooling (e.g. backfill_teable.py)
+    that doesn't have FIREFLIES_API_KEY set. Regression: importing `notifier` at
+    module top level pulled in config.py which requires FIREFLIES_API_KEY at
+    import time and would KeyError before the module ever loaded.
+    """
+    import importlib
+    import sys
+
+    monkeypatch.delenv("FIREFLIES_API_KEY", raising=False)
+    # Force a clean import of discovery_extractor (and its transitive deps) under
+    # the cleared env. If anything at module-top-level reads FIREFLIES_API_KEY
+    # strictly, the reload below will raise.
+    for mod in ("discovery_extractor", "notifier", "config"):
+        sys.modules.pop(mod, None)
+    mod = importlib.import_module("discovery_extractor")
+    assert hasattr(mod, "TeableAuthError")
+    assert hasattr(mod, "store_extraction")
