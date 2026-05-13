@@ -1,2 +1,3 @@
-description: Cloudflare Access service-token Client ID for vm-api calls (used alongside Authorization Bearer header).
-is_secret: true
+description: Cloudflare Access service-token Client ID (windmill-token) — non-secret half. Used in CF-Access-Client-Id header alongside CF-Access-Client-Secret + Authorization Bearer to call vm-api via leads.jumpersapp.com tunnel.
+value: 41ff1b53a34ee15975db59e6f79f553b.access
+is_secret: false
