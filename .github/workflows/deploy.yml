@@ -278,7 +278,9 @@ jobs:
           sleep 5
           HEALTHY=0
           for i in {1..10}; do
-            if curl -sf http://${{ secrets.DEPLOY_HOST }}:3101/health; then
+            if curl -sf https://leads.jumpersapp.com/health \
+                 -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+                 -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}"; then
               echo "✓ VM API healthy"
               HEALTHY=1
               break
@@ -370,8 +372,12 @@ jobs:
         run: |
           HEALTHY=0
           for i in {1..40}; do
-            if curl -sf http://${{ secrets.DEPLOY_HOST }}:4000/health/liveliness >/dev/null \
-               || curl -sf http://${{ secrets.DEPLOY_HOST }}:4000/health >/dev/null; then
+            if curl -sf https://llm.jumpersapp.com/health/liveliness \
+                 -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+                 -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}" >/dev/null \
+               || curl -sf https://llm.jumpersapp.com/health \
+                 -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+                 -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}" >/dev/null; then
               echo "✓ LiteLLM gateway healthy (attempt $i)"
               HEALTHY=1
               break
