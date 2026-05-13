@@ -1,3 +1,4 @@
+import os
 import httpx
 import json
 import logging
@@ -5,7 +6,7 @@ from fireflies import Transcript
 from classifier import ClassificationResult
 from config import HINDSIGHT_API_KEY
 
-HINDSIGHT_URL = "http://34.61.120.233:8888"
+HINDSIGHT_URL = os.environ.get("HINDSIGHT_URL", "http://127.0.0.1:8888")
 BANK_ID = "broccoli-meetings"
 
 logger = logging.getLogger(__name__)
