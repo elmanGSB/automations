@@ -6,17 +6,25 @@ import wmill
 def main() -> dict:
     vm_api_base_url = wmill.get_variable("u/admin/vm_api_base_url")
     vm_api_secret = wmill.get_variable("u/admin/vm_api_secret")
+    cf_access_id = wmill.get_variable("u/admin/cf_access_client_id")
+    cf_access_secret = wmill.get_variable("u/admin/cf_access_client_secret")
     bot_token: str | None = wmill.get_variable("u/admin/telegram_bot_token")
     chat_id: str | None = wmill.get_variable("u/admin/telegram_chat_id")
 
     if not vm_api_base_url or not vm_api_secret:
         raise RuntimeError("VM API variables not configured")
+    if not cf_access_id or not cf_access_secret:
+        raise RuntimeError("Cloudflare Access variables u/admin/cf_access_client_id or u/admin/cf_access_client_secret not set")
 
     try:
         with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)) as client:
             r = client.get(
                 f"{vm_api_base_url}/health/full",
-                headers={"Authorization": f"Bearer {vm_api_secret}"},
+                headers={
+                    "Authorization": f"Bearer {vm_api_secret}",
+                    "CF-Access-Client-Id": cf_access_id,
+                    "CF-Access-Client-Secret": cf_access_secret,
+                },
             )
             r.raise_for_status()
             health = r.json()
