@@ -5,7 +5,7 @@ load_dotenv()
 
 FIREFLIES_API_KEY = os.environ["FIREFLIES_API_KEY"]
 
-LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://34.61.120.233:4000/v1")
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://127.0.0.1:4000/v1")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
 LITELLM_MODEL = os.environ.get("LITELLM_MODEL", "claude-sonnet")
 
