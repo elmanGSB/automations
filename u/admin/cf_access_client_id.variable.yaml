@@ -1,0 +1,2 @@
+description: Cloudflare Access service-token Client ID for vm-api calls (used alongside Authorization Bearer header).
+is_secret: true
