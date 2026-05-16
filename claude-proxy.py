@@ -105,9 +105,16 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         # company domain). In non-interactive -p mode these are blocked by
         # default; without this flag Claude falls back to training-data answers
         # and tells the caller "web search isn't approved in your current
-        # permissions". Both tools are read-only — no filesystem or network
-        # mutation — so allowlisting them globally is safe for any caller.
-        cmd.extend(["--allowedTools", "WebSearch,WebFetch"])
+        # permissions". All three tools are read-only — no filesystem or
+        # network mutation — so allowlisting them globally is safe.
+        #
+        # Task is included so callers can spawn parallel subagents (Claude Code's
+        # native fan-out primitive). The triage resolver uses this to run N
+        # WebSearches in parallel inside one claude -p call — verified at 5
+        # parallel subagents in 26s on the VM. Without Task, the model
+        # serializes WebSearch calls and a batch of 30 takes ~80s; with Task,
+        # we expect a single batch of 50+ to finish in well under a minute.
+        cmd.extend(["--allowedTools", "WebSearch,WebFetch,Task"])
 
         # Upstream failures (rc != 0, timeout, claude CLI missing) MUST surface
         # as HTTP 5xx so LiteLLM applies its retry/fallback policy. Returning
