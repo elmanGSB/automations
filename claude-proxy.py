@@ -100,6 +100,15 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         if cli_model:
             cmd.extend(["--model", cli_model])
 
+        # Allowlist read-only network tools so prompts can ask for live web data
+        # (e.g. the Attio triage resolver asking Claude to find a canonical
+        # company domain). In non-interactive -p mode these are blocked by
+        # default; without this flag Claude falls back to training-data answers
+        # and tells the caller "web search isn't approved in your current
+        # permissions". Both tools are read-only — no filesystem or network
+        # mutation — so allowlisting them globally is safe for any caller.
+        cmd.extend(["--allowedTools", "WebSearch,WebFetch"])
+
         # Upstream failures (rc != 0, timeout, claude CLI missing) MUST surface
         # as HTTP 5xx so LiteLLM applies its retry/fallback policy. Returning
         # 200 with the error string in content makes the caller think the LLM
