@@ -27,6 +27,7 @@ Stanford GSB classes (use the specific slug, not a generic one):
 - class-leadership: The Art of Leading in Challenging Times
 - class-taxes: Taxes and Business Strategy
 - class-fsa: Financial Statement Analysis
+- class-fin-trading: Financial Trading Strategies
 
 Return ONLY a JSON object with no other text:
 {
