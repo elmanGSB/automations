@@ -1,18 +1,24 @@
-# Attio Triage v2 — split-and-queue architecture
+# Attio Triage v2 — sub-workflow architecture
 
-**Date:** 2026-05-17
+**Date:** 2026-05-17 (revised after codex + DHH + Kieran + simplicity reviews)
 **Status:** Design — pending review
-**Goal:** Handle CSVs of any size reliably through the existing Attio Triage v2 n8n workflow, without OOM crashes, without 1-hour timeout failures, without manual chunking dances.
+**Goal:** Handle CSVs of any size reliably through the existing Attio Triage v2 pipeline, without OOM crashes, without 1-hour timeout failures, without operator babysitting.
 
 ## Problem statement
 
-The current Attio Triage v2 workflow (`HrQEwEig7NgpcFvi`) processes CSVs of California-registered food distributors through domain resolution + Attio CRM enrichment + Hunter/Apollo contact enrichment + XLSX output. It works for files up to ~400 rows. Above that:
+The current Attio Triage v2 workflow (`HrQEwEig7NgpcFvi`) processes CSVs of food distributors through domain resolution + Attio CRM enrichment + Hunter/Apollo contact enrichment + XLSX output. It works for files up to ~200-400 rows. Above that:
 
-- **OOM crashes** (`WorkflowCrashedError: Workflow did not finish, possible out-of-memory issue`) — verified at 612 rows in exec 463. n8n Cloud's worker memory cannot hold all the row state + accumulated AI responses + intermediate Attio/Hunter/Apollo payloads + XLSX assembly state at once.
+- **OOM crashes** — verified at 612 rows in exec 463 (`WorkflowCrashedError: Workflow did not finish, possible out-of-memory issue`). All intermediate Attio/Hunter/Apollo payloads + AI responses + accumulated row state pile up in one n8n worker process.
 - **1-hour execution cap** — verified at exec 448 (serial 48 AI calls × 50s = 40 min just for resolver).
-- **Concurrency thundering herd** — firing 5 parallel chunks from a webhook crashed all 5 due to combined worker memory pressure (execs 466-470).
+- **Concurrency thundering herd** — 5 parallel webhook-fanout chunks crashed all 5 due to shared worker memory pressure.
 
-The 612-row run was salvaged by manually chunking into 6 sequential webhook invocations and merging XLSX outputs in Python. This works once but is not durable.
+The 612-row run was salvaged by manually chunking into 6 sequential webhook invocations and merging XLSX outputs in Python. Works once, not durable.
+
+## Design history
+
+This is the second revision. The first revision proposed Dispatcher/Worker mode bifurcation inside one workflow, plus a new Consolidator workflow + new Data Tables. Three reviewers (codex, DHH, Kieran, code-simplicity) converged on the same critique: **we were reinventing n8n's built-in primitives** (Execute Workflow, SplitInBatches) and adding state-management debt (new Data Tables) to work around them.
+
+This revision adopts DHH's recommendation: two workflows connected by Execute Workflow, hardened with Kieran's idempotency note.
 
 ## Constraints we keep
 
@@ -20,269 +26,260 @@ The 612-row run was salvaged by manually chunking into 6 sequential webhook invo
 - claude-proxy on the VM (subscription Claude, $0 cost) is the resolver engine.
 - Existing Attio + Hunter + Apollo + GDrive nodes stay.
 - Plan ceiling: 5 concurrent executions per n8n account.
+- Single XLSX output per input file (operator preference; chosen in brainstorming Q3).
 
 ## Architecture
 
-### Two-folder, three-workflow design
+### Two workflows connected by Execute Workflow
 
 ```
-                                                ┌──────────────────────────┐
-                                                │   Triage Workflow        │
-                                                │   (existing, modified)   │
-                                                │   concurrency = 3        │
-                                                └────────────┬─────────────┘
-                                                             │
-                ┌──────────────────────────┐                 │
-[ Pipeline ───→ │  GDrive Trigger          │ ───→ chunk run? │
-   Inbox ]     │  Webhook                  │      yes → fire N webhooks (offset/limit) and exit
-                └──────────────────────────┘      no  → process inline → output to Triage Outbox
-                                                                                   │
-                                                                                   ▼
-                                                                          [ Triage Outbox ]
-                                                                                   │
-                                                                                   ▼
-                                                                ┌──────────────────────────┐
-                                                                │   Consolidator Workflow  │
-                                                                │   (new)                  │
-                                                                │   detects chunk pattern, │
-                                                                │   merges when batch done │
-                                                                └──────────┬───────────────┘
-                                                                           │
-                                                                           ▼
-                                                            [ Triage Outbox ] (final consolidated XLSX)
-                                                                           ↑
-                                                                           └ chunk XLSXs are deleted
+┌──────────────────────────────────────────────────────────────────────┐
+│  Triage-Main (existing workflow, refactored)                         │
+│                                                                      │
+│  GDrive Trigger → Download → SHA256 → Manifest claim                 │
+│    → Detect File Format → Extract Companies → Dedup                  │
+│    → SplitInBatches (size = 100)                                     │
+│    ┌─ onEachBatch ──→ Execute Workflow ──→ (wait for return)         │
+│    │                  [Triage-Worker]      enriched items            │
+│    │                                       ↓                         │
+│    │                                       collect in main           │
+│    └──── nextBatch ────────────────────────┘                         │
+│    → Build single XLSX → Upload to Triage Outbox                     │
+│    → Manifest mark success → Move Input to Processed                 │
+└──────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  │ Execute Workflow (sub-workflow call)
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│  Triage-Worker (new workflow)                                        │
+│  workflow concurrency = 3 (n8n setting)                              │
+│                                                                      │
+│  Execute Workflow Trigger ──→ Has Domain? IF                         │
+│  (input: array of                ├─ TRUE  → straight to Attio        │
+│   row items)                     └─ FALSE → AI Resolver (claude -p)  │
+│                              → Attio Find Company by Domain          │
+│                              → Branch Classifier (A/B/C/D)           │
+│                              → For Branch D: Hunter → Apollo         │
+│                              → return enriched items                 │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-The single existing `Pipeline Inbox` folder stays. Operator's mental model: "drop any-size CSV in the inbox, get a final XLSX in the outbox."
+The single existing `Pipeline Inbox` folder stays. Operator's mental model unchanged: "drop any CSV in the inbox, get a single XLSX in the outbox."
 
-### Workflow A: Triage (existing, modified)
+### Why this solves the structural problems
 
-Mode is determined by the webhook payload (or absence of one for GDrive-triggered runs):
+| Problem | How this design fixes it |
+|---|---|
+| OOM at 612 rows | Each Triage-Worker invocation processes only 100 rows. Intermediate Attio/Hunter/Apollo payloads are scoped to that sub-execution and garbage-collected on return. Parent only holds the small enriched return values (domain + branch + recommended_action + contact list) — not the bloated raw API responses. |
+| 1-hour parent execution cap | Time bound is N_chunks × avg_chunk_time. For 612 rows with chunk=100 and per-chunk ~7 min: 7 × 7 = 49 min sequential — fits under the cap. Sub-workflow parallelism (if n8n's Execute Workflow supports it on the operator's plan) drops this further. See "Open question on parallelism" below. |
+| Webhook fanout thundering herd | No webhooks. Execute Workflow is synchronous-from-the-parent's-perspective; n8n's own concurrency setting on Triage-Worker (max 3) caps parallelism naturally. |
+| Filename-as-state | Doesn't exist. Sub-workflow input/output is in-memory data, not files. |
+| New Data Tables to maintain | Doesn't exist. Existing `triage_runs` manifest is the only state store. |
+| "Operator notices missing output" recovery | Sub-workflow errors propagate to the parent as item errors. Parent handles them in one place (failed chunks visible in execution UI, retryable via re-run). |
 
-| Mode | Trigger | Payload shape | Behavior |
-|---|---|---|---|
-| **Dispatcher** | GDrive trigger OR webhook without `offset`/`limit` | `{file_id, file_name, force?}` | Detects file size, decides whether to split, fires chunk webhooks if needed, exits without producing output. |
-| **Worker** | Webhook with `offset` and `limit` set | `{file_id, file_name, force, offset, limit, batch_id, total_rows}` | Processes the specified slice, outputs a chunk XLSX named `<original>__chunk_<offset>_of_<total>_<batch_id>.xlsx`. |
-| **Inline** | GDrive trigger OR webhook, file is ≤400 rows | `{file_id, file_name, force?}` | Acts as a single worker over the whole file. Outputs `<original>.xlsx` (no chunk pattern). |
+## Workflow A: Triage-Main (refactored)
 
-#### Decision logic (one new node after Dedup Companies)
+### Node changes
 
-```js
-// "Detect Mode" Code node, runs once for all items
-const webhookBody = (() => {
-  try {
-    const wh = $('Webhook: Manual Trigger').first();
-    return (wh && wh.json && wh.json.body) || {};
-  } catch (e) { return {}; }
-})();
+**Removed nodes:**
+- All current resolver-branch nodes (Build Resolver Batches, AI: Resolve Domains via Web Search, Apply Resolutions) — MOVED to Triage-Worker.
+- The Webhook trigger from the previous spec — not needed.
+- The "Webhook to File Ref" adapter — not needed.
+- Apollo + Hunter nodes in this workflow's body — MOVED to Triage-Worker.
 
-const SPLIT_THRESHOLD = 400;
-const CHUNK_SIZE = 100;
-const rowCount = $input.all().length;
-const hasOffsetLimit = (typeof webhookBody.offset === 'number') && (typeof webhookBody.limit === 'number');
+**Kept nodes (no changes):**
+- GDrive Trigger
+- GDrive: Download File
+- Compute SHA256
+- Manifest: Lookup, Decide Claim, Should Process?, Manifest: Claim, Log Skip
+- Restore Binary
+- Detect File Format
+- Extract: CSV Companies, Extract: People sheet
+- Merge Input Rows
+- Dedup Companies, Dedup People
+- Build Companies Output (the final XLSX builder)
+- Upload Output
+- Manifest: Mark Success, Move Input to Processed
 
-let mode;
-if (hasOffsetLimit) {
-  mode = 'worker';
-} else if (rowCount > SPLIT_THRESHOLD) {
-  mode = 'dispatcher';
-} else {
-  mode = 'inline';
-}
+**New nodes:**
+- `Loop Chunks` (n8n `splitInBatches`, version 3, batch size 100, reset off): splits the deduped 612-row array into batches.
+- `Execute Workflow: Triage-Worker` (n8n `executeWorkflow`): inside the SplitInBatches loop's onEachBatch path. Passes the batch's items as input; receives enriched items as output.
+- The `Build Companies Output` node moves to AFTER the SplitInBatches loop completes.
 
-return [{ json: { mode, rowCount, webhookBody } }];
-```
+### Decide Claim simplification
 
-A new IF node `Is Dispatcher?` routes:
-- **Dispatcher branch**: Build chunk list → Loop → HTTP Request (fire webhook per chunk) → Exit (no XLSX produced).
-- **Worker/Inline branch**: existing flow continues unchanged (Has Domain? → resolver → Attio → ... → Upload Output).
+Removes the `force: true` bypass and the `split_dispatched` status from the previous spec. Only relevant statuses are now `processing` (active run) and `success`. Stale-processing reclaim window stays at 10 minutes (already deployed).
 
-#### Chunk dispatch
+### Concurrency
 
-```js
-// "Build Dispatch Payloads" Code node
-const items = $input.all();
-const CHUNK_SIZE = 100;
-const fileId = $('GDrive: Download File').first().json.id;
-const fileName = $('GDrive: Download File').first().json.name;
-const batchId = $('Compute SHA256').first().json.file_sha1.slice(0, 8);
-const totalRows = items.length;
-const payloads = [];
-for (let offset = 0; offset < totalRows; offset += CHUNK_SIZE) {
-  payloads.push({ json: {
-    file_id: fileId,
-    file_name: fileName,
-    force: true,
-    offset,
-    limit: Math.min(CHUNK_SIZE, totalRows - offset),
-    batch_id: batchId,
-    total_rows: totalRows
-  }});
-}
-return payloads;
-```
+`Triage-Main` keeps the n8n Cloud default (1). One execution per file drop. Multiple file drops queue naturally.
 
-Then an HTTP Request node hits its own webhook URL (`POST https://broccolliai.app.n8n.cloud/webhook/triage-fire`) per item. With workflow concurrency = 3, n8n queues these and runs three at a time.
+## Workflow B: Triage-Worker (new)
 
-#### Worker output filename
+### Trigger
+- `Execute Workflow Trigger` (n8n's native sub-workflow entry point). Input: array of row items, each containing at minimum `name`, `city`, `domain` (may be empty), `linkedin_url`.
 
-The existing "Upload Output" node's filename is built from the input file name. Modify the filename builder to append the chunk marker when in worker mode:
-
-```js
-const mode = $('Detect Mode').first().json.mode;
-const body = $('Detect Mode').first().json.webhookBody;
-const sha8 = $('Compute SHA256').first().json.file_sha1.slice(0, 8);
-const baseName = (originalName || 'output').replace(/\.csv$/i, '').replace(/\.xlsx$/i, '');
-let outName;
-if (mode === 'worker') {
-  outName = `${baseName}__chunk_${body.offset}_of_${body.total_rows}_${body.batch_id}.xlsx`;
-} else {
-  outName = `${baseName}.xlsx`;
-}
-```
-
-This keeps inline runs producing clean output, and worker runs producing identifiable chunks.
-
-#### Concurrency cap
-
-Set the Triage workflow's concurrency setting to **3** in n8n Cloud (`Settings → Workflow concurrency`). Empirically:
-- 1 chunk × 100 rows works comfortably.
-- 5 concurrent chunks OOMs.
-- 3 is untested but a reasonable midpoint; if it fails we drop to 2.
-
-#### Worker mode notes
-
-- Workers bypass the manifest via `force: true` since the dispatcher already claimed the manifest row.
-- Workers do not write to the manifest. The dispatcher writes a `split_dispatched` row; the Consolidator writes the final `success` row when merging.
-
-### Workflow B: Consolidator (new)
-
-Watches `Triage Outbox` for chunk-pattern files. When all chunks of a batch arrive, merges into one XLSX.
-
-#### Trigger
-- GDrive trigger on `Triage Outbox` (`fileCreated`).
-- Skip non-chunk files (filename doesn't match `__chunk_\d+_of_\d+_[a-f0-9]+\.xlsx$`).
-
-#### Logic
+### Pipeline
+The Worker's pipeline is the existing Triage-Main's resolver + enrichment chain, lifted whole:
 
 ```
-GDrive Trigger
-  → Parse Filename (Code: extract batch_id, total_rows, offset from filename)
-  → If pattern doesn't match: exit silently
-  → GDrive Search (parent = Triage Outbox, name contains batch_id)
-  → Code: Compute expected chunk count = ceil(total_rows / CHUNK_SIZE)
-  → If found count < expected: exit silently (other chunks still pending)
-  → Loop chunks:
-       GDrive: Download File
-       Read XLSX rows (n8n's Spreadsheet File node)
-  → Merge: concatenate all rows
-  → Convert to XLSX (Spreadsheet File node)
-  → Upload to Triage Outbox: <original>_consolidated.xlsx
-  → Loop chunks: GDrive: Delete File (delete each chunk)
-  → Manifest: Mark Success (update triage_runs row with consolidated file id)
+Execute Workflow Trigger
+  → Has Domain? IF
+       FALSE branch → AI Resolver (single batch of up to 100 rows; internally
+                     dispatched to claude-proxy via the Anthropic node with
+                     "search the web" prompt — same as today)
+                   → Apply Resolutions
+                   → Merge into rows
+       TRUE branch  → straight to Attio
+  → Loop Companies (item iteration over the batch)
+       → Attio: Find Company by Domain
+       → Classify Match Count → Branch A/B/C/D
+       → If in CRM: Attio Read Company, Attio Query People, Classify Engagement
+       → If Branch D: Hunter Domain Search → IF Empty → Apollo Search
+       → Per-row enrichment output
+  → Return enriched array (last node's output IS the worker's return value)
 ```
 
-#### Race conditions
-- Two consolidator runs firing for the same batch (last two chunks arrive in quick succession): use a small Data Table `consolidator_locks` keyed by `batch_id` with a 5-min TTL; first run claims, second exits.
-- Partial batch (one chunk fails): Consolidator never fires for that batch. Operator notices missing consolidated output → re-fires the failed chunk's webhook manually.
+### Internal resolver batching
 
-### Workflow A wiring changes summary
+The worker processes up to 100 rows per invocation. Inside the worker, the AI resolver uses BATCH_SIZE = 15 subagent fan-out (already deployed, tested at 49s per batch). For a 100-row worker invocation: 7 internal AI batches × 49s = ~6 min just for the resolver, plus Attio/Hunter/Apollo per-row (~3 min for 100 rows). Total ~10 min per worker.
 
-New nodes:
-- `Detect Mode` (Code) — after Dedup Companies.
-- `Is Dispatcher?` (IF) — routes dispatcher vs worker/inline.
-- `Build Dispatch Payloads` (Code) — only in dispatcher branch.
-- `HTTP Request: Fire Chunk Webhook` (HTTP Request) — only in dispatcher branch.
+### Concurrency
 
-Modified nodes:
-- `Upload Output` filename builder — appends `__chunk_<offset>_of_<total>_<batch_id>` when in worker mode.
+Set Triage-Worker's `Workflow Settings → Concurrency` to **3**. This means up to 3 worker sub-executions run in parallel. (The n8n Cloud account-wide cap is 5; leaving 2 slots free for other workflows.)
 
-No nodes deleted.
+### Error handling
 
-### Workflow B sketch (~8 nodes)
+The Worker workflow's `Workflow Settings → Error workflow` is set to a global error-notification workflow (separate small workflow, sends Slack alert — out of scope for this spec but listed as a follow-up). Per-node retries stay at maxTries=3 on the Anthropic and HTTP nodes.
 
-- `GDrive Trigger: Triage Outbox` (filtered to fileCreated)
-- `Parse Filename` (Code)
-- `Match Chunk Pattern?` (IF)
-- `Search Outbox by batch_id` (GDrive Search)
-- `All Chunks Present?` (Code + IF)
-- `Download + Read Chunks` (loop)
-- `Merge Rows` (Code or Spreadsheet)
-- `Upload Consolidated` (GDrive Upload)
-- `Delete Chunks` (loop GDrive Delete)
-- `Manifest: Mark Success`
+## Data contract: Triage-Main → Triage-Worker
 
-## Data contract
-
-### Webhook payload (worker mode)
+### Input to Triage-Worker (one n8n item per row)
 ```json
 {
-  "file_id": "1G99RqUZWYLt3gclmN3oNwTWGYJqH_Irp",
-  "file_name": "Registered_Distributors.csv",
-  "force": true,
-  "offset": 100,
-  "limit": 100,
-  "batch_id": "c25a0402",
-  "total_rows": 612
+  "name": "Costco Depot #961",
+  "city": "Mira Loma",
+  "domain": "",                  // empty triggers resolver path
+  "linkedin_url": "",
+  "input_row_ids": [22],
+  "notes": []
 }
 ```
 
-### Chunk XLSX filename
-```
-<basename>__chunk_<offset>_of_<total>_<batch_id>.xlsx
-e.g. Registered_Distributors__chunk_100_of_612_c25a0402.xlsx
+### Output from Triage-Worker (one n8n item per row, in input order)
+```json
+{
+  "name": "Costco Depot #961",
+  "city": "Mira Loma",
+  "domain": "costco.com",
+  "domain_resolved_from_name": true,
+  "branch": "D",
+  "in_crm": false,
+  "attio_company_id": null,
+  "attio_company_domains": [],
+  "engagement_status": "no_engagement",
+  "contacts_in_crm_count": 0,
+  "contacts_found_via_enrichment": 10,
+  "enriched_contacts": [ /* Hunter / Apollo enriched contact objects */ ],
+  "recommended_action": "new_company_with_contacts",
+  "needs_review": false,
+  "review_reason": "",
+  "notes": ["domain_resolved_from_websearch"],
+  "websearch_confidence": "high",
+  "websearch_reasoning": "..."
+}
 ```
 
-### Consolidated XLSX filename
-```
-<basename>_consolidated.xlsx
-e.g. Registered_Distributors_consolidated.xlsx
-```
+Parent collects these arrays from each chunk and concatenates them in order. After SplitInBatches completes, parent has the full enriched dataset and builds the single XLSX.
 
 ## Idempotency
 
-| Layer | Mechanism |
+Single layer: `triage_runs` manifest, keyed by SHA256 of input file.
+
+| Scenario | Behavior |
 |---|---|
-| Triage Dispatcher | SHA256 of input file → `triage_runs` row, status = `split_dispatched`. Re-trigger on same SHA = skip (existing manifest logic). |
-| Triage Worker | `force: true` bypasses manifest. Each worker is the responsibility of its dispatcher. |
-| Consolidator | `consolidator_locks` data table prevents double-merge. Filename of consolidated output is deterministic — duplicate uploads overwritten, not duplicated. |
+| Same file SHA dropped twice within 10 min while first run is in flight | Second run sees `processing` status with fresh timestamp → `in_progress_recent` → skips |
+| Same file SHA dropped after first run completed successfully | Second run sees `success` status → skips |
+| First run crashed; same file dropped >10 min later | Stale `processing` row → `stale_processing_takeover` → claim and re-run |
+| Worker chunk fails mid-parent-run | Parent execution shows the failure; manifest stays `processing`; operator inspects, re-runs by re-dropping the file |
 
-## Failure modes and recovery
+No new state stores. No `force` flag. No `triage_batches` table. No `consolidator_locks`.
 
-| Failure | Detection | Recovery |
+## Failure modes
+
+| Failure | Effect | Recovery |
 |---|---|---|
-| Dispatcher crashes mid-fanout | Some chunks fired, some not. | Operator re-fires the original (force=true). Already-completed chunks are no-ops because the original manifest row is `split_dispatched`. Missing chunks rerun. |
-| Worker OOMs | Chunk XLSX never lands in Outbox. | Consolidator never fires. Operator notices missing consolidated output. Re-fires that specific chunk webhook manually with same `offset`/`limit`/`batch_id`. |
-| Consolidator runs prematurely | Has fewer chunks than expected; exits silently. | Next chunk arrival re-triggers consolidator. Idempotent. |
-| Consolidator merges twice | `consolidator_locks` prevents this. | N/A |
-| Chunk file deleted between Consolidator's search and download | One chunk download fails. | Consolidator should retry or log + exit (operator re-fires manually). |
+| Worker invocation OOMs (one chunk's intermediate state too big) | Parent's SplitInBatches loop sees that batch's error; can configure node-level retry. If retries exhausted, parent execution fails. | Reduce internal AI BATCH_SIZE in Triage-Worker; redrop file. |
+| Worker exceeds the proxy's 180s subprocess timeout on a Claude call | Anthropic node returns error envelope; node-level retry (maxTries=3) handles transient issues. Persistent failure: that chunk's resolver leaves some domains empty (graceful degradation). | Output XLSX flags `domain_resolution_failed` in notes. |
+| Parent execution hits 1h cap | Parent crashes. Manifest stays `processing`. | Stale-takeover catches it on re-drop. Lower per-chunk row count to fit time budget. |
+| GDrive trigger doesn't fire (n8n cloud polling lag) | No execution starts. | Operator notices missing output; re-drop or toggle workflow. (Out of scope for this spec — separate known issue with n8n cloud GDrive triggers.) |
+| Sub-workflow not found at runtime | Parent's Execute Workflow node errors. | Operator checks workflow IDs; redrop. |
 
 ## Performance projection
 
-| File size (deduped rows) | Mode | Wall time |
-|---|---|---|
-| ≤400 | inline | 5-25 min |
-| 400-800 | split into 4-8 chunks | ~25 min with concurrency=3 (2 waves of 3) |
-| 600-1200 | split into 6-12 chunks | ~50 min with concurrency=3 (4 waves) |
-| 2000 | split into 20 chunks | ~83 min |
+| File size (deduped rows) | n_chunks @ 100/chunk | Sequential wall time (~10 min/chunk) | Parallel-3 wall time |
+|---|---|---|---|
+| 100 | 1 | ~10 min | ~10 min |
+| 400 | 4 | ~40 min | ~14 min |
+| 612 (today's CDFA list) | 7 | ~70 min ⚠️ (exceeds 1h cap) | ~25 min |
+| 1000 | 10 | ~100 min ⚠️ | ~35 min |
+| 2000 | 20 | ~200 min ⚠️ | ~70 min ⚠️ |
 
-This puts the 612-row test at ~25 min (vs. 76 min serial chunking we just did manually).
+⚠️ Cells exceed n8n's 1h execution cap. Parallel-3 column assumes Execute Workflow with parallel sub-execution is available. This is the open question below.
 
-## Out of scope (for this spec)
+## Open question on parallelism
 
-- Re-architecting the resolver to use a Python worker on the VM (covered in adversarial review; potential future work if this design hits its own limits).
-- Cleanup of stuck `processing` manifest rows (the 2-min staleness window we set is sufficient for normal operation).
-- Retry strategy for transient claude-proxy errors (n8n node's existing retry config is sufficient).
+**Does n8n's Execute Workflow node run sub-workflows in parallel when called inside a SplitInBatches loop?**
 
-## Open questions
+If YES (or if we can pass all batch items at once to Execute Workflow with `runOnceForEachItem` and n8n parallelizes): the design fits 612 rows in ~25 min, well under the cap, and scales to ~1500 rows.
 
-None.
+If NO (sub-workflows are strictly sequential): the design fits ~500 rows comfortably. Files >500 rows would either hit the 1h cap OR need a workaround (operator splits manually, or we revisit the spec).
+
+**Test plan to resolve this**: implementation Phase 1.5 runs a controlled test with a 200-row file. If wall time is roughly 2 × (one chunk time), it's sequential. If wall time is roughly 1 × (one chunk time), it's parallel. Based on the result we either:
+- Ship as-is (if parallel)
+- Or set a documented file-size limit (if sequential) and add operator guidance: "files > 500 rows, split before drop"
+
+## Implementation order
+
+Per code-simplicity reviewer: build the smaller, more-testable workflow first.
+
+1. **Phase 1 — Build Triage-Worker in isolation.** Create the new workflow with Execute Workflow Trigger entry. Lift the resolver + Attio + Hunter + Apollo nodes from Triage-Main as-is. Test by manually triggering with a 5-row sample via the n8n UI's "Execute Workflow" run-with-data feature. Verify return shape matches the data contract above.
+
+2. **Phase 2 — Refactor Triage-Main.** Delete the resolver + Attio + Hunter + Apollo nodes from Triage-Main. Insert `SplitInBatches` (size=100) after Dedup. Insert `Execute Workflow` (Triage-Worker) inside the loop. Verify Build Companies Output runs after the loop completes with concatenated results.
+
+3. **Phase 2.5 — Concurrency test.** Drop a 200-row file. Measure wall time. If ~10 min: sub-workflows are parallel. If ~20 min: sequential.
+
+4. **Phase 3 — Production verification on the 612-row CDFA file.** Compare scorecard to today's manual-chunked baseline (87% resolution, 43 in CRM). Discrepancy >2% in any metric → root-cause before declaring done.
+
+5. **Phase 4 — Set Triage-Worker concurrency to 3.** Configure in n8n's Workflow Settings UI.
+
+6. **Phase 5 — (Optional) Set up global Error workflow.** Tiny separate workflow with Error Trigger → Slack notification. Wire as the "Error workflow" in both Triage-Main and Triage-Worker settings.
 
 ## Acceptance criteria
 
-1. Dropping a 100-row CSV in Pipeline Inbox produces one consolidated XLSX in Triage Outbox within 15 min. No chunk files remain in Outbox.
-2. Dropping the 612-row CDFA Registered_Distributors CSV produces one consolidated XLSX matching the 612-row scorecard we just verified (87% domain resolution, 43 in CRM). No chunk files remain in Outbox. Wall time ≤40 min.
-3. Dropping 3 medium files (~300 rows each) simultaneously: all three produce consolidated XLSXs without OOM. Wall time ≤90 min.
-4. Dropping 5 files simultaneously: concurrency=3 means 3 process, 2 queue. All five complete eventually.
-5. A worker chunk OOMing leaves a partial batch (chunk XLSXs in Outbox without consolidated). Operator can re-fire that specific chunk via webhook curl, and Consolidator completes the merge.
+1. **Triage-Worker in isolation**: Manually executing Triage-Worker with 5 hand-crafted row items returns 5 enriched items matching the data contract. Per-row fields populated correctly (domain, branch, in_crm, etc.).
+
+2. **100-row file end-to-end**: Drop a 100-row CSV in Pipeline Inbox. Produces one consolidated XLSX in Triage Outbox within 12 min. Scorecard matches today's exec 465 baseline (≥95% domain resolution on this sample).
+
+3. **612-row file end-to-end**: Drop `Registered_Distributors.csv`. Produces one consolidated XLSX in Triage Outbox. Scorecard matches today's manual-chunked baseline: 535 ± 10 domains resolved, 43 ± 2 in CRM, 77 ± 5 unresolvable. Wall time ≤55 min.
+
+4. **Idempotency**: Drop the same 612-row CSV twice in quick succession. Second drop logs `already_succeeded` and skips. No duplicate output XLSX.
+
+5. **Multi-file drop**: Drop 3 medium files (~200 rows each) simultaneously. All three produce consolidated XLSXs without OOM. Wall times stay reasonable given Triage-Worker concurrency=3 (some sub-execution slots may be shared across the three parent runs).
+
+6. **No new Data Tables created.** Only `triage_runs` exists in the project's n8n Data Tables UI.
+
+7. **No chunked XLSX files in Triage Outbox.** Only consolidated outputs.
+
+## Out of scope (explicit)
+
+- Re-architecting the resolver as a Python service on the VM (codex's preference, deferred per operator's "stay in n8n" preference).
+- Building a generic queue/worker pattern for other workflows (this spec is for triage only).
+- Cleaning up the existing stuck `processing` manifest rows from past failed runs (operator runs a one-off SQL/Data Table cleanup or waits for 10-min staleness).
+- A global Error workflow (recommended follow-up; not blocking).
+
+## Files this design touches
+
+- n8n workflow `HrQEwEig7NgpcFvi` (Attio Triage v2 → Triage-Main): substantial refactor.
+- A new n8n workflow `Triage-Worker`: created from scratch (mostly lifted nodes).
+- No code in any git repo changes. (The proxy + LiteLLM changes from earlier PRs stay.)
