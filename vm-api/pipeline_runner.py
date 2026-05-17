@@ -264,8 +264,17 @@ def _run_pipeline(
             result["steps"]["notebooklm_upload"] = {"status": "error", "error": "upload_failed"}
             return result
 
-        if not analysis_enabled:
-            skipped = {"status": "skipped", "reason": f"category={classification.category}"}
+        # Title override: meetings titled "Internal:" suppress analysis+email
+        # even when the classifier returns customer-discovery. Elman uses this
+        # prefix for team-internal recordings, and the classifier sometimes
+        # overrides based on content — firing a misleading novel-insights email.
+        internal_title_override = bool(
+            transcript.title and transcript.title.strip().lower().startswith("internal:")
+        )
+
+        if not analysis_enabled or internal_title_override:
+            reason = "internal_title" if internal_title_override else f"category={classification.category}"
+            skipped = {"status": "skipped", "reason": reason}
             result["steps"]["nlm_analysis"] = skipped
             result["steps"]["email"] = skipped
         else:
