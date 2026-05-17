@@ -64,7 +64,7 @@ All emails come from `customer_discovery@agentmail.to` to `elman@stanford.edu` a
 | Novel insights | After each new `customer-discovery` meeting | `[Customer Discovery] New Interview: <title>` |
 | Weekly patterns | Monday 9am UTC | `[Weekly] Interview Patterns — Customer Discovery` |
 
-Only `customer-discovery` meetings generate emails. All other categories (classes, investor calls, team syncs, advisors, tools-research) are classified and stored but skip NotebookLM and email entirely.
+Only `customer-discovery` meetings generate emails. All other known categories (classes, investor calls, team syncs, advisors, tools-research) get their transcripts archived as sources in a per-category NotebookLM notebook, but skip the novel-insights analysis + email. Ad-hoc/unknown categories skip NotebookLM entirely.
 
 ## Meeting Categories
 
