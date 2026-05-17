@@ -18,7 +18,12 @@ import asyncpg
 
 from analyzer import analyze_novel
 from classifier import classify_meeting
-from config import FIREFLIES_API_KEY, INTERNAL_TEAM_NAMES, NLM_ENABLED_CATEGORIES
+from config import (
+    FIREFLIES_API_KEY,
+    INTERNAL_TEAM_NAMES,
+    NLM_ANALYSIS_CATEGORIES,
+    NLM_UPLOAD_CATEGORIES,
+)
 from discovery_extractor import process_discovery_meeting
 from docx_generator import generate_transcript_docx
 from emailer import send_novel_report
@@ -73,7 +78,10 @@ def _run_on_loop(coro, loop: asyncio.AbstractEventLoop):
 
 
 def run_meeting_pipeline(
-    meeting_id: str, pool: asyncpg.Pool, loop: asyncio.AbstractEventLoop
+    meeting_id: str,
+    pool: asyncpg.Pool,
+    loop: asyncio.AbstractEventLoop,
+    force: bool = False,
 ) -> dict:
     """
     Run full pipeline for a meeting. Returns structured dict with status per step.
@@ -81,25 +89,32 @@ def run_meeting_pipeline(
 
     Plain def — runs in FastAPI threadpool. All blocking I/O (subprocess, HTTP) is safe here.
     loop: the FastAPI event loop that owns the asyncpg pool.
+    force: bypass the is_meeting_processed early-return so backfills can re-run
+        on meetings the prior pipeline marked done. Upload-level idempotency
+        (is_nlm_uploaded) still prevents duplicate sources.
     """
-    # Fast in-flight check (in-memory, no file I/O)
+    # Fast in-flight check (in-memory, no file I/O).
+    # force does NOT bypass this — concurrent retries should still dedup.
     if meeting_id in _in_flight:
         logger.info("Meeting %s already in-flight, skipping concurrent run", meeting_id)
         return {"status": "skipped", "reason": "in_flight", "meeting_id": meeting_id}
     _in_flight.add(meeting_id)
 
     try:
-        return _run_pipeline(meeting_id, pool, loop)
+        return _run_pipeline(meeting_id, pool, loop, force=force)
     finally:
         _in_flight.discard(meeting_id)
 
 
 def _run_pipeline(
-    meeting_id: str, pool: asyncpg.Pool, loop: asyncio.AbstractEventLoop
+    meeting_id: str,
+    pool: asyncpg.Pool,
+    loop: asyncio.AbstractEventLoop,
+    force: bool = False,
 ) -> dict:
     # Read-only idempotency check — does not claim the meeting yet.
     # Marking happens after the NLM upload succeeds so transient failures are retryable.
-    if is_meeting_processed(meeting_id):
+    if not force and is_meeting_processed(meeting_id):
         logger.info("Meeting %s already processed, skipping", meeting_id)
         return {"status": "skipped", "reason": "already_processed", "meeting_id": meeting_id}
 
@@ -195,13 +210,19 @@ def _run_pipeline(
             "reason": f"category={classification.category}",
         }
 
-    # Steps 5-8: NLM upload, analysis, and email — only for categories where
-    # novel insight extraction makes sense (has external interviewees).
-    # Classes, team-syncs, etc. skip this entire block.
-    nlm_enabled = classification.category in NLM_ENABLED_CATEGORIES
+    # Steps 5-8: NLM block, gated in two stages.
+    #   Upload (notebook + source) runs for any KNOWN category so classes,
+    #   investor calls, etc. accumulate searchable archives. Ad-hoc/unknown
+    #   categories skip entirely to avoid orphan notebooks.
+    #   Analysis + email run only for customer-discovery — other categories
+    #   have no [INTERVIEWEE] speaker, so the novel-insights prompt returns noise.
+    upload_enabled = classification.category in NLM_UPLOAD_CATEGORIES
+    analysis_enabled = classification.category in NLM_ANALYSIS_CATEGORIES
+    notebook_id = None
+    is_new_notebook = False
     analysis = None
 
-    if not nlm_enabled:
+    if not upload_enabled:
         skipped = {"status": "skipped", "reason": f"category={classification.category}"}
         for key in ("notebooklm_notebook", "notebooklm_upload", "nlm_analysis", "email"):
             result["steps"][key] = skipped
@@ -243,35 +264,40 @@ def _run_pipeline(
             result["steps"]["notebooklm_upload"] = {"status": "error", "error": "upload_failed"}
             return result
 
-        # Step 7: Query novel insights
-        try:
-            analysis = analyze_novel(
-                notebook_id,
-                title=transcript.title,
-                date=_meeting_date(transcript.date),
-                participants=list(transcript.participants or []),
-            )
-            result["steps"]["nlm_analysis"] = {
-                "status": "ok",
-                "novel_length": len(analysis.novel),
-            }
-            result["novel_insights"] = analysis.novel
-        except Exception:
-            logger.exception("NLM analysis failed for meeting %s", meeting_id)
-            result["steps"]["nlm_analysis"] = {"status": "error", "error": "analysis_failed"}
-            return result
-
-        # Step 8: Email report (non-fatal; guard against empty novel)
-        if analysis.novel.strip():
-            try:
-                asyncio.run(send_novel_report(transcript.title, classification.category, analysis.novel))
-                result["steps"]["email"] = {"status": "ok"}
-            except Exception:
-                logger.exception("Email failed for meeting %s (non-fatal)", meeting_id)
-                result["steps"]["email"] = {"status": "error", "error": "email_failed"}
+        if not analysis_enabled:
+            skipped = {"status": "skipped", "reason": f"category={classification.category}"}
+            result["steps"]["nlm_analysis"] = skipped
+            result["steps"]["email"] = skipped
         else:
-            logger.warning("Meeting %s: NLM returned empty novel insights — skipping email", meeting_id)
-            result["steps"]["email"] = {"status": "skipped", "reason": "empty_novel"}
+            # Step 7: Query novel insights
+            try:
+                analysis = analyze_novel(
+                    notebook_id,
+                    title=transcript.title,
+                    date=_meeting_date(transcript.date),
+                    participants=list(transcript.participants or []),
+                )
+                result["steps"]["nlm_analysis"] = {
+                    "status": "ok",
+                    "novel_length": len(analysis.novel),
+                }
+                result["novel_insights"] = analysis.novel
+            except Exception:
+                logger.exception("NLM analysis failed for meeting %s", meeting_id)
+                result["steps"]["nlm_analysis"] = {"status": "error", "error": "analysis_failed"}
+                return result
+
+            # Step 8: Email report (non-fatal; guard against empty novel)
+            if analysis.novel.strip():
+                try:
+                    asyncio.run(send_novel_report(transcript.title, classification.category, analysis.novel))
+                    result["steps"]["email"] = {"status": "ok"}
+                except Exception:
+                    logger.exception("Email failed for meeting %s (non-fatal)", meeting_id)
+                    result["steps"]["email"] = {"status": "error", "error": "email_failed"}
+            else:
+                logger.warning("Meeting %s: NLM returned empty novel insights — skipping email", meeting_id)
+                result["steps"]["email"] = {"status": "skipped", "reason": "empty_novel"}
 
     # Step 9: Mark as processed — after NLM work (or skip), before Hindsight.
     mark_meeting_processed(meeting_id)
@@ -289,7 +315,7 @@ def _run_pipeline(
         result["steps"]["hindsight"] = {"status": "error", "error": "hindsight_failed"}
 
     # Step 11: Notify on new unknown category (non-fatal)
-    if nlm_enabled and is_new_notebook and classification.is_new_category:
+    if upload_enabled and is_new_notebook and classification.is_new_category:
         try:
             notify_new_category(
                 category=classification.category,

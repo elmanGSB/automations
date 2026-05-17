@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
 from analyzer import analyze_patterns
-from config import NLM_ENABLED_CATEGORIES
+from config import NLM_ANALYSIS_CATEGORIES
 from emailer import send_patterns_report
 from pipeline_runner import run_meeting_pipeline
 from state import get_all_notebooks
@@ -121,6 +121,10 @@ async def health_full():
 
 class PipelineRunRequest(BaseModel):
     meeting_id: str
+    # Backfill flag: bypass the is_meeting_processed early-return so meetings
+    # the prior pipeline already marked done can be re-run end-to-end. Upload
+    # idempotency is preserved by is_nlm_uploaded state.
+    force: bool = False
 
 
 @app.post("/api/pipeline/run", dependencies=[Depends(require_auth)])
@@ -130,7 +134,7 @@ def run_pipeline_endpoint(req: PipelineRunRequest):
     """
     if pool is None or app_event_loop is None:
         raise HTTPException(status_code=503, detail="App not initialized")
-    return run_meeting_pipeline(req.meeting_id, pool, app_event_loop)
+    return run_meeting_pipeline(req.meeting_id, pool, app_event_loop, force=req.force)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +154,7 @@ def run_digest_endpoint() -> dict[str, Any]:
     notebooks = get_all_notebooks()
     results: dict[str, Any] = {}
 
-    for category in NLM_ENABLED_CATEGORIES:
+    for category in NLM_ANALYSIS_CATEGORIES:
         notebook_id = notebooks.get(category)
         if not notebook_id:
             results[category] = {"status": "skipped", "reason": "no_notebook"}

@@ -70,6 +70,41 @@ def test_pipeline_skips_already_processed():
     assert result["reason"] == "already_processed"
 
 
+def test_pipeline_force_bypasses_already_processed():
+    """force=True must skip the is_meeting_processed guard so the pipeline
+    runs end-to-end on a meeting that was previously processed without an
+    NLM upload (e.g. backfilling pre-fix class meetings)."""
+    mock_transcript, mock_cls, make_ff = _full_happy_path_patches(
+        classification=make_mock_classification(category="class-mge")
+    )
+
+    with patch("pipeline_runner.is_meeting_processed", return_value=True) as mock_proc, \
+         patch("pipeline_runner.mark_meeting_processed"), \
+         patch("pipeline_runner._run_on_loop", side_effect=_test_async_runner), \
+         patch("pipeline_runner.FirefliesClient", return_value=make_ff()), \
+         patch("pipeline_runner.classify_meeting", new_callable=AsyncMock, return_value=mock_cls), \
+         patch("pipeline_runner.classify_speakers", return_value={"Elman": "internal"}), \
+         patch("pipeline_runner.format_with_roles", return_value="labeled"), \
+         patch("pipeline_runner.format_external_with_context", return_value=""), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-class-mge", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/class.docx"), \
+         patch("pipeline_runner.add_file_source") as mock_upload, \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
+         patch("pipeline_runner.retain_meeting", new_callable=AsyncMock):
+        result = _pr.run_meeting_pipeline(
+            "backfill-class-1", MagicMock(), _mock_loop(), force=True
+        )
+
+    # Despite is_meeting_processed returning True, the pipeline ran to completion
+    assert result["status"] == "completed"
+    assert result["steps"]["notebooklm_upload"]["status"] == "ok"
+    mock_upload.assert_called_once()
+    # And is_meeting_processed was either not consulted, or its True return was ignored
+    # (either way: result is NOT the short-circuit skip)
+    assert result.get("reason") != "already_processed"
+
+
 def test_pipeline_returns_structured_steps():
     """run_meeting_pipeline returns completed status with per-step results."""
     mock_transcript, mock_cls, make_ff = _full_happy_path_patches()
@@ -229,11 +264,13 @@ def test_pipeline_skips_extraction_for_non_discovery_category():
 
 
 # ---------------------------------------------------------------------------
-# Guard: NLM + email skipped for non-enabled categories (classes, team-syncs)
+# Class meetings: upload to NLM (source archive), but skip analysis + email
 # ---------------------------------------------------------------------------
 
-def test_pipeline_skips_nlm_and_email_for_class_meetings():
-    """Class meetings must skip NLM upload, analysis, and email entirely."""
+def test_pipeline_uploads_class_meetings_but_skips_analysis_and_email():
+    """Class meetings must upload transcript to NLM (its own notebook) and
+    skip only the novel-insights analysis + email, which produce noise for
+    classes that have no [INTERVIEWEE] speaker."""
     mock_transcript, _, make_ff = _full_happy_path_patches()
     class_cls = make_mock_classification(category="class-mge")
 
@@ -245,8 +282,11 @@ def test_pipeline_skips_nlm_and_email_for_class_meetings():
          patch("pipeline_runner.classify_speakers", return_value={"Elman": "internal"}), \
          patch("pipeline_runner.format_with_roles", return_value="labeled"), \
          patch("pipeline_runner.format_external_with_context", return_value=""), \
-         patch("pipeline_runner.get_or_create_notebook_id") as mock_nb, \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-class-mge", False)) as mock_nb, \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/class.docx"), \
          patch("pipeline_runner.add_file_source") as mock_upload, \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
          patch("pipeline_runner.analyze_novel") as mock_analyze, \
          patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
          patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
@@ -254,6 +294,48 @@ def test_pipeline_skips_nlm_and_email_for_class_meetings():
         result = _pr.run_meeting_pipeline("class-meeting-1", MagicMock(), _mock_loop())
 
     assert result["status"] == "completed"
+    # Upload path runs for classes
+    assert result["steps"]["notebooklm_notebook"]["status"] == "ok"
+    assert result["steps"]["notebooklm_notebook"]["notebook_id"] == "nb-class-mge"
+    assert result["steps"]["notebooklm_upload"]["status"] == "ok"
+    mock_nb.assert_called_once()
+    # Pin upload args so a swap (e.g. wrong notebook id, wrong file path) fails
+    mock_upload.assert_called_once_with(
+        "nb-class-mge", "/tmp/class.docx", mock_transcript.title
+    )
+    # Analysis + email are gated separately and still skip
+    assert result["steps"]["nlm_analysis"]["status"] == "skipped"
+    assert result["steps"]["nlm_analysis"]["reason"] == "category=class-mge"
+    assert result["steps"]["email"]["status"] == "skipped"
+    assert result["steps"]["email"]["reason"] == "category=class-mge"
+    mock_analyze.assert_not_called()
+    mock_send.assert_not_called()
+
+
+def test_pipeline_skips_nlm_entirely_for_uncategorized_meetings():
+    """Meetings classified into a brand-new ad-hoc category (not in
+    KNOWN_CATEGORIES) must still skip the entire NLM block — no orphan
+    notebooks for transient categories."""
+    mock_transcript, _, make_ff = _full_happy_path_patches()
+    unknown_cls = make_mock_classification(category="ad-hoc-coffee-chat")
+    unknown_cls.is_new_category = True
+
+    with patch("pipeline_runner.is_meeting_processed", return_value=False), \
+         patch("pipeline_runner.mark_meeting_processed"), \
+         patch("pipeline_runner._run_on_loop", side_effect=_test_async_runner), \
+         patch("pipeline_runner.FirefliesClient", return_value=make_ff()), \
+         patch("pipeline_runner.classify_meeting", new_callable=AsyncMock, return_value=unknown_cls), \
+         patch("pipeline_runner.classify_speakers", return_value={"Jane": "external", "Elman": "internal"}), \
+         patch("pipeline_runner.format_with_roles", return_value="labeled"), \
+         patch("pipeline_runner.format_external_with_context", return_value="external"), \
+         patch("pipeline_runner.get_or_create_notebook_id") as mock_nb, \
+         patch("pipeline_runner.add_file_source") as mock_upload, \
+         patch("pipeline_runner.analyze_novel") as mock_analyze, \
+         patch("pipeline_runner.send_novel_report", new_callable=AsyncMock) as mock_send, \
+         patch("pipeline_runner.retain_meeting", new_callable=AsyncMock), \
+         patch("pipeline_runner.retain_novel_insights", new_callable=AsyncMock):
+        result = _pr.run_meeting_pipeline("adhoc-1", MagicMock(), _mock_loop())
+
     assert result["steps"]["notebooklm_notebook"]["status"] == "skipped"
     assert result["steps"]["notebooklm_upload"]["status"] == "skipped"
     assert result["steps"]["nlm_analysis"]["status"] == "skipped"
