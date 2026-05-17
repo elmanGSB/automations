@@ -93,6 +93,16 @@ Only `customer-discovery` triggers the novel-insights analysis and email. Other 
 
 Unknown meeting types get a descriptive slug (e.g. `conference-panel`). Add them to `KNOWN_CATEGORIES` in `config.py` to give them a human-readable notebook title.
 
+### `Internal:` title override (Steps ⑦–⑧)
+
+Meetings with titles starting `Internal:` (case-insensitive) skip the novel-insights analysis + email **even when the classifier returns `customer-discovery`**. Upload to the per-category notebook still runs so the transcript stays archived; only the email is suppressed.
+
+Rationale: founders use `Internal:` as a personal naming convention for team-internal recordings. The classifier sometimes overrides based on content — e.g. an `Internal:`-titled call that's actually a real prospect chat — and would fire a misleading novel-insights email. The title prefix is authoritative for the email decision; the classifier remains authoritative for upload/extraction destinations.
+
+### Backfilling missed meetings
+
+When meetings exist in Fireflies but didn't land in the right NotebookLM notebook (gate-logic regression, pre-webhook history, classifier mis-bucket), use the operational runbook: [`docs/backfill-runbook.md`](docs/backfill-runbook.md). `POST /api/pipeline/run` accepts `force: true` to replay a meeting that's already in `_processed`.
+
 ### Internal team filter (Step ②)
 
 Speakers are matched against `INTERNAL_TEAM_NAMES` in `config.py` (case-insensitive substring):
