@@ -27,6 +27,9 @@ KNOWN_CATEGORIES = {
     "class-taxes": "Taxes — Taxes and Business Strategy",
     "class-fsa": "FSA — Financial Statement Analysis",
     "class-fin-trading": "Fin Trading — Financial Trading Strategies",
+    "class-conv-mgmt": "Conv in Mgmt — Conversations in Management",
+    "class-policy": "Policy — Policy Proposals & Political Strategy",
+    "class-humor": "Humor — Comedy Fundamentals",
 }
 
 INTERNAL_TEAM_NAMES = [

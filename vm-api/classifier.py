@@ -28,6 +28,9 @@ Stanford GSB classes (use the specific slug, not a generic one):
 - class-taxes: Taxes and Business Strategy
 - class-fsa: Financial Statement Analysis
 - class-fin-trading: Financial Trading Strategies
+- class-conv-mgmt: Conversations in Management (interpersonal communication, difficult conversations, feedback)
+- class-policy: Policy Proposals & Political Strategy (immigration, accountability, public policy seminars)
+- class-humor: Comedy Fundamentals (humor, comedy writing, performance)
 
 Return ONLY a JSON object with no other text:
 {
