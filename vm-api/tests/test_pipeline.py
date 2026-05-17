@@ -70,6 +70,41 @@ def test_pipeline_skips_already_processed():
     assert result["reason"] == "already_processed"
 
 
+def test_pipeline_force_bypasses_already_processed():
+    """force=True must skip the is_meeting_processed guard so the pipeline
+    runs end-to-end on a meeting that was previously processed without an
+    NLM upload (e.g. backfilling pre-fix class meetings)."""
+    mock_transcript, mock_cls, make_ff = _full_happy_path_patches(
+        classification=make_mock_classification(category="class-mge")
+    )
+
+    with patch("pipeline_runner.is_meeting_processed", return_value=True) as mock_proc, \
+         patch("pipeline_runner.mark_meeting_processed"), \
+         patch("pipeline_runner._run_on_loop", side_effect=_test_async_runner), \
+         patch("pipeline_runner.FirefliesClient", return_value=make_ff()), \
+         patch("pipeline_runner.classify_meeting", new_callable=AsyncMock, return_value=mock_cls), \
+         patch("pipeline_runner.classify_speakers", return_value={"Elman": "internal"}), \
+         patch("pipeline_runner.format_with_roles", return_value="labeled"), \
+         patch("pipeline_runner.format_external_with_context", return_value=""), \
+         patch("pipeline_runner.get_or_create_notebook_id", return_value=("nb-class-mge", False)), \
+         patch("pipeline_runner.is_nlm_uploaded", return_value=False), \
+         patch("pipeline_runner.generate_transcript_docx", return_value="/tmp/class.docx"), \
+         patch("pipeline_runner.add_file_source") as mock_upload, \
+         patch("pipeline_runner.mark_nlm_uploaded"), \
+         patch("pipeline_runner.retain_meeting", new_callable=AsyncMock):
+        result = _pr.run_meeting_pipeline(
+            "backfill-class-1", MagicMock(), _mock_loop(), force=True
+        )
+
+    # Despite is_meeting_processed returning True, the pipeline ran to completion
+    assert result["status"] == "completed"
+    assert result["steps"]["notebooklm_upload"]["status"] == "ok"
+    mock_upload.assert_called_once()
+    # And is_meeting_processed was either not consulted, or its True return was ignored
+    # (either way: result is NOT the short-circuit skip)
+    assert result.get("reason") != "already_processed"
+
+
 def test_pipeline_returns_structured_steps():
     """run_meeting_pipeline returns completed status with per-step results."""
     mock_transcript, mock_cls, make_ff = _full_happy_path_patches()
@@ -264,7 +299,10 @@ def test_pipeline_uploads_class_meetings_but_skips_analysis_and_email():
     assert result["steps"]["notebooklm_notebook"]["notebook_id"] == "nb-class-mge"
     assert result["steps"]["notebooklm_upload"]["status"] == "ok"
     mock_nb.assert_called_once()
-    mock_upload.assert_called_once()
+    # Pin upload args so a swap (e.g. wrong notebook id, wrong file path) fails
+    mock_upload.assert_called_once_with(
+        "nb-class-mge", "/tmp/class.docx", mock_transcript.title
+    )
     # Analysis + email are gated separately and still skip
     assert result["steps"]["nlm_analysis"]["status"] == "skipped"
     assert result["steps"]["nlm_analysis"]["reason"] == "category=class-mge"

@@ -78,7 +78,10 @@ def _run_on_loop(coro, loop: asyncio.AbstractEventLoop):
 
 
 def run_meeting_pipeline(
-    meeting_id: str, pool: asyncpg.Pool, loop: asyncio.AbstractEventLoop
+    meeting_id: str,
+    pool: asyncpg.Pool,
+    loop: asyncio.AbstractEventLoop,
+    force: bool = False,
 ) -> dict:
     """
     Run full pipeline for a meeting. Returns structured dict with status per step.
@@ -86,25 +89,32 @@ def run_meeting_pipeline(
 
     Plain def — runs in FastAPI threadpool. All blocking I/O (subprocess, HTTP) is safe here.
     loop: the FastAPI event loop that owns the asyncpg pool.
+    force: bypass the is_meeting_processed early-return so backfills can re-run
+        on meetings the prior pipeline marked done. Upload-level idempotency
+        (is_nlm_uploaded) still prevents duplicate sources.
     """
-    # Fast in-flight check (in-memory, no file I/O)
+    # Fast in-flight check (in-memory, no file I/O).
+    # force does NOT bypass this — concurrent retries should still dedup.
     if meeting_id in _in_flight:
         logger.info("Meeting %s already in-flight, skipping concurrent run", meeting_id)
         return {"status": "skipped", "reason": "in_flight", "meeting_id": meeting_id}
     _in_flight.add(meeting_id)
 
     try:
-        return _run_pipeline(meeting_id, pool, loop)
+        return _run_pipeline(meeting_id, pool, loop, force=force)
     finally:
         _in_flight.discard(meeting_id)
 
 
 def _run_pipeline(
-    meeting_id: str, pool: asyncpg.Pool, loop: asyncio.AbstractEventLoop
+    meeting_id: str,
+    pool: asyncpg.Pool,
+    loop: asyncio.AbstractEventLoop,
+    force: bool = False,
 ) -> dict:
     # Read-only idempotency check — does not claim the meeting yet.
     # Marking happens after the NLM upload succeeds so transient failures are retryable.
-    if is_meeting_processed(meeting_id):
+    if not force and is_meeting_processed(meeting_id):
         logger.info("Meeting %s already processed, skipping", meeting_id)
         return {"status": "skipped", "reason": "already_processed", "meeting_id": meeting_id}
 

@@ -121,6 +121,10 @@ async def health_full():
 
 class PipelineRunRequest(BaseModel):
     meeting_id: str
+    # Backfill flag: bypass the is_meeting_processed early-return so meetings
+    # the prior pipeline already marked done can be re-run end-to-end. Upload
+    # idempotency is preserved by is_nlm_uploaded state.
+    force: bool = False
 
 
 @app.post("/api/pipeline/run", dependencies=[Depends(require_auth)])
@@ -130,7 +134,7 @@ def run_pipeline_endpoint(req: PipelineRunRequest):
     """
     if pool is None or app_event_loop is None:
         raise HTTPException(status_code=503, detail="App not initialized")
-    return run_meeting_pipeline(req.meeting_id, pool, app_event_loop)
+    return run_meeting_pipeline(req.meeting_id, pool, app_event_loop, force=req.force)
 
 
 # ---------------------------------------------------------------------------
