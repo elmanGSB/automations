@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
 from analyzer import analyze_patterns
-from config import NLM_ENABLED_CATEGORIES
+from config import NLM_ANALYSIS_CATEGORIES
 from emailer import send_patterns_report
 from pipeline_runner import run_meeting_pipeline
 from state import get_all_notebooks
@@ -150,7 +150,7 @@ def run_digest_endpoint() -> dict[str, Any]:
     notebooks = get_all_notebooks()
     results: dict[str, Any] = {}
 
-    for category in NLM_ENABLED_CATEGORIES:
+    for category in NLM_ANALYSIS_CATEGORIES:
         notebook_id = notebooks.get(category)
         if not notebook_id:
             results[category] = {"status": "skipped", "reason": "no_notebook"}
