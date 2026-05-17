@@ -1,7 +1,7 @@
 # Attio Triage v2 — sub-workflow architecture
 
 **Date:** 2026-05-17 (revised after codex + DHH + Kieran + simplicity reviews)
-**Status:** Design — pending review
+**Status:** Implemented 2026-05-17 (validated up to 100 rows; >400 rows requires manual split per spec open question on parallelism)
 **Goal:** Handle CSVs of any size reliably through the existing Attio Triage v2 pipeline, without OOM crashes, without 1-hour timeout failures, without operator babysitting.
 
 ## Problem statement
