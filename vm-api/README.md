@@ -85,6 +85,7 @@ Only `customer-discovery` triggers the novel-insights analysis and email. Other 
 | `class-leadership` | The Art of Leading in Challenging Times | — | ✅ | — |
 | `class-taxes` | Taxes and Business Strategy | — | ✅ | — |
 | `class-fsa` | Financial Statement Analysis | — | ✅ | — |
+| `class-fin-trading` | Financial Trading Strategies | — | ✅ | — |
 | *(new slug)* | Auto-generated for unknown types | — | — | — |
 
 Unknown meeting types get a descriptive slug (e.g. `conference-panel`). Add them to `KNOWN_CATEGORIES` in `config.py` to give them a human-readable notebook title.

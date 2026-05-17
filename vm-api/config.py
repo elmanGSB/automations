@@ -26,6 +26,7 @@ KNOWN_CATEGORIES = {
     "class-leadership": "Leadership — Art of Leading in Challenging Times",
     "class-taxes": "Taxes — Taxes and Business Strategy",
     "class-fsa": "FSA — Financial Statement Analysis",
+    "class-fin-trading": "Fin Trading — Financial Trading Strategies",
 }
 
 INTERNAL_TEAM_NAMES = [
