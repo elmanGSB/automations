@@ -6,7 +6,7 @@
 
 ## Problem statement
 
-The current Attio Triage v2 workflow (`HrQEwEig7NgpcFvi`) processes CSVs of California-registered food distributors through domain resolution + Attio CRM enrichment + Hunter/Apollo contact enrichment + XLSX output. It works for files up to ~200-300 rows. Above that:
+The current Attio Triage v2 workflow (`HrQEwEig7NgpcFvi`) processes CSVs of California-registered food distributors through domain resolution + Attio CRM enrichment + Hunter/Apollo contact enrichment + XLSX output. It works for files up to ~400 rows. Above that:
 
 - **OOM crashes** (`WorkflowCrashedError: Workflow did not finish, possible out-of-memory issue`) — verified at 612 rows in exec 463. n8n Cloud's worker memory cannot hold all the row state + accumulated AI responses + intermediate Attio/Hunter/Apollo payloads + XLSX assembly state at once.
 - **1-hour execution cap** — verified at exec 448 (serial 48 AI calls × 50s = 40 min just for resolver).
@@ -64,7 +64,7 @@ Mode is determined by the webhook payload (or absence of one for GDrive-triggere
 |---|---|---|---|
 | **Dispatcher** | GDrive trigger OR webhook without `offset`/`limit` | `{file_id, file_name, force?}` | Detects file size, decides whether to split, fires chunk webhooks if needed, exits without producing output. |
 | **Worker** | Webhook with `offset` and `limit` set | `{file_id, file_name, force, offset, limit, batch_id, total_rows}` | Processes the specified slice, outputs a chunk XLSX named `<original>__chunk_<offset>_of_<total>_<batch_id>.xlsx`. |
-| **Inline** | GDrive trigger OR webhook, file is ≤200 rows | `{file_id, file_name, force?}` | Acts as a single worker over the whole file. Outputs `<original>.xlsx` (no chunk pattern). |
+| **Inline** | GDrive trigger OR webhook, file is ≤400 rows | `{file_id, file_name, force?}` | Acts as a single worker over the whole file. Outputs `<original>.xlsx` (no chunk pattern). |
 
 #### Decision logic (one new node after Dedup Companies)
 
@@ -77,7 +77,7 @@ const webhookBody = (() => {
   } catch (e) { return {}; }
 })();
 
-const SPLIT_THRESHOLD = 200;
+const SPLIT_THRESHOLD = 400;
 const CHUNK_SIZE = 100;
 const rowCount = $input.all().length;
 const hasOffsetLimit = (typeof webhookBody.offset === 'number') && (typeof webhookBody.limit === 'number');
@@ -262,8 +262,8 @@ e.g. Registered_Distributors_consolidated.xlsx
 
 | File size (deduped rows) | Mode | Wall time |
 |---|---|---|
-| ≤200 | inline | 5-25 min |
-| 200-600 | split into 2-6 chunks | ~25 min with concurrency=3 (2 waves of 3) |
+| ≤400 | inline | 5-25 min |
+| 400-800 | split into 4-8 chunks | ~25 min with concurrency=3 (2 waves of 3) |
 | 600-1200 | split into 6-12 chunks | ~50 min with concurrency=3 (4 waves) |
 | 2000 | split into 20 chunks | ~83 min |
 
