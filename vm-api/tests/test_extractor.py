@@ -299,3 +299,76 @@ def test_discovery_extractor_imports_without_fireflies_env(monkeypatch):
     mod = importlib.import_module("discovery_extractor")
     assert hasattr(mod, "TeableAuthError")
     assert hasattr(mod, "store_extraction")
+
+
+# ---------------------------------------------------------------------------
+# Subcategory schema tests (Task 2)
+# ---------------------------------------------------------------------------
+
+def test_prompt_excludes_technology_category():
+    """EXTRACTION_SYSTEM_PROMPT must not list technology as a valid category."""
+    from discovery_extractor import EXTRACTION_SYSTEM_PROMPT
+    assert '"technology"' not in EXTRACTION_SYSTEM_PROMPT
+    assert "'technology'" not in EXTRACTION_SYSTEM_PROMPT
+    for cat in ["ordering", "pricing", "inventory", "relationship", "delivery"]:
+        assert cat in EXTRACTION_SYSTEM_PROMPT
+
+
+def test_prompt_includes_subcategory_field():
+    """EXTRACTION_SYSTEM_PROMPT must include subcategory in the insight JSON schema."""
+    from discovery_extractor import EXTRACTION_SYSTEM_PROMPT
+    assert '"subcategory"' in EXTRACTION_SYSTEM_PROMPT
+
+
+def test_prompt_includes_subcategory_slugs():
+    """EXTRACTION_SYSTEM_PROMPT must list subcategory slugs."""
+    from discovery_extractor import EXTRACTION_SYSTEM_PROMPT
+    for slug in [
+        "manual-entry-causes-errors",
+        "promo-roi-invisible",
+        "unexpected-stockouts",
+        "account-lost-when-rep-leaves",
+        "whatsapp-as-system-of-record",
+        "invoice-dispute-delays-payment",
+    ]:
+        assert slug in EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_store_extraction_writes_subcategory():
+    """store_extraction must include subcategory in the insights INSERT."""
+    pool, conn = make_mock_pool()
+    extraction = {
+        "interviewee_type": "distributor",
+        "insights": [{
+            "type": "problem",
+            "content": "Orders are wrong",
+            "category": "ordering",
+            "subcategory": "manual-entry-causes-errors",
+            "severity": "critical",
+            "sentiment": "negative",
+            "verbatim_quote": "We retype everything twice",
+        }],
+        "clusters": [],
+        "summary": "s",
+        "participant_role": None,
+        "company_name": None,
+        "product_categories": [],
+        "behavioral_segment": None,
+        "demographics": None,
+    }
+
+    with patch("discovery_extractor.TeableClient"):
+        await store_extraction_fn(
+            pool=pool,
+            extraction=extraction,
+            participant_name="John",
+            interview_date=date(2026, 5, 25),
+            transcript_text="text",
+        )
+
+    execute_calls = conn.execute.await_args_list
+    insight_call = execute_calls[0]
+    call_args = insight_call.args
+    # index 0 = SQL string, 1=interview_id, 2=type, 3=content, 4=category, 5=subcategory
+    assert call_args[5] == "manual-entry-causes-errors"

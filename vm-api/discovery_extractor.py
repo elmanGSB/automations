@@ -51,10 +51,11 @@ JSON Schema:
     {
       "type": "problem|need|observation|opportunity|quote",
       "content": "Clear, specific description in 1-2 sentences",
-      "category": "ordering|delivery|pricing|inventory|communication|quality|returns|payments|technology|compliance|relationship",
+      "category": "ordering|delivery|pricing|inventory|communication|quality|returns|payments|compliance|relationship",
+      "subcategory": "<slug from the reference below — match to the insight's category>",
       "severity": "critical|high|medium|low",
       "sentiment": "positive|negative|neutral|mixed",
-      "verbatim_quote": "exact words from participant or null"
+      "verbatim_quote": "exact words from participant — REQUIRED, do not leave null"
     }
   ],
   "empathy_map": {
@@ -69,11 +70,26 @@ JSON Schema:
       "need": "what they need solved",
       "insight": "why it matters",
       "memorable_quote": "verbatim quote",
-      "category": "ordering|delivery|pricing|inventory|communication|quality|returns|payments|technology|compliance|relationship"
+      "category": "ordering|delivery|pricing|inventory|communication|quality|returns|payments|compliance|relationship"
     }
   ],
   "memorable_quotes": ["top 3-5 quotable lines"]
-}"""
+}
+
+SUBCATEGORY REFERENCE — use the slug exactly as listed, pick the closest match to the insight:
+
+ordering: manual-entry-causes-errors | missed-upsell-crosssell | customer-wont-place-digitally | no-order-status-after-placed
+pricing: wrong-price-on-invoice | customer-doesnt-know-price-before-ordering | margin-shrinking-undetected | promo-roi-invisible | rebates-and-allowances-uncollected | losing-deals-on-price
+inventory: unexpected-stockouts | perishable-spoilage | cash-locked-in-overstock | stock-data-always-stale
+relationship: account-lost-when-rep-leaves | rep-only-reacts-never-alerts | service-failures-erode-trust | new-rep-takes-months-to-ramp
+delivery: late-or-missed-delivery | wrong-items-dropped | 8-hour-delivery-window
+communication: order-changes-lost | whatsapp-as-system-of-record | no-escalation-path
+payments: invoice-dispute-delays-payment | net-60-cash-flow-crunch | overdue-ar-not-followed-up
+quality: product-damaged-on-arrival | same-quality-problems-repeat
+returns: credit-takes-weeks | return-pickup-no-show
+compliance: records-missing-at-audit | regulatory-complexity-overwhelm
+
+If an insight does not fit any subcategory, use the closest match. Do not leave subcategory null."""
 
 EXTRACTION_USER_PROMPT = """Analyze this interview and extract:
 
@@ -94,7 +110,10 @@ EXTRACTION_USER_PROMPT = """Analyze this interview and extract:
 
 5. **Insights**: Every distinct problem, need, observation, opportunity, or quote (aim for 5-15).
    - Be specific — "delivery windows vary by 8 hours" not "delivery is unreliable"
+   - Assign category from: ordering, delivery, pricing, inventory, communication, quality, returns, payments, compliance, relationship
+   - Assign subcategory slug from the reference in the system prompt
    - Rate severity: critical (blocking), high (major friction), medium (annoying), low (minor)
+   - verbatim_quote is REQUIRED — find the closest direct quote from the transcript
 
 6. **Empathy map**:
    - THINKS: internal thoughts about business, role, industry
@@ -212,14 +231,15 @@ async def store_extraction(
                 await conn.execute(
                     """
                     INSERT INTO discovery.insights
-                        (interview_id, type, content, category, severity,
+                        (interview_id, type, content, category, subcategory, severity,
                          sentiment, verbatim_quote, tags)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                     """,
                     interview_id,
                     insight["type"],
                     insight["content"],
                     insight.get("category"),
+                    insight.get("subcategory"),
                     insight.get("severity"),
                     insight.get("sentiment"),
                     insight.get("verbatim_quote"),
