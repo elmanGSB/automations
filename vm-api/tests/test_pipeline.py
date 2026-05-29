@@ -427,11 +427,11 @@ async def test_pipeline_run_requires_auth():
 
 @pytest.mark.asyncio
 async def test_pipeline_run_accepts_immediately():
-    """POST /api/pipeline/run must return 202 immediately without blocking."""
+    """Normal webhook calls return 202 without blocking (background task path)."""
     import main as m
     m.VM_API_SECRET = "secret"
 
-    with patch("main._run_pipeline_background"), \
+    with patch("main._run_pipeline_background") as mock_bg, \
          patch("main.pool", MagicMock()), \
          patch("main.app_event_loop", MagicMock()):
         async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
@@ -443,6 +443,25 @@ async def test_pipeline_run_accepts_immediately():
     assert r.status_code == 202
     assert r.json()["status"] == "accepted"
     assert r.json()["meeting_id"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_force_blocks():
+    """force=True runs synchronously so backfill loops serialize pipeline jobs."""
+    import main as m
+    m.VM_API_SECRET = "secret"
+
+    with patch("main._run_pipeline_background") as mock_bg, \
+         patch("main.pool", MagicMock()), \
+         patch("main.app_event_loop", MagicMock()):
+        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
+            r = await ac.post(
+                "/api/pipeline/run",
+                json={"meeting_id": "abc123", "force": True},
+                headers={"Authorization": "Bearer secret"},
+            )
+    assert r.status_code == 202
+    mock_bg.assert_called_once_with("abc123", True)  # called inline, not as background task
 
 
 # ---------------------------------------------------------------------------

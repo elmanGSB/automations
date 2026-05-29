@@ -169,12 +169,16 @@ def _run_pipeline_background(meeting_id: str, force: bool = False) -> None:
 def run_pipeline_endpoint(req: PipelineRunRequest, background_tasks: BackgroundTasks):
     """Accept immediately (202) and run the pipeline as a background task.
 
-    Returns in <1s so Cloudflare's 100s origin timeout is never reached.
-    Failure alerts are sent directly from the background task via Telegram.
+    Normal webhook calls return in <1s so Cloudflare's 100s origin timeout is
+    never reached. force=True runs synchronously to preserve the one-at-a-time
+    serialization that backfill loops rely on (avoids concurrent NLM/state hammering).
     """
     if pool is None or app_event_loop is None:
         raise HTTPException(status_code=503, detail="App not initialized")
-    background_tasks.add_task(_run_pipeline_background, req.meeting_id, req.force)
+    if req.force:
+        _run_pipeline_background(req.meeting_id, req.force)
+    else:
+        background_tasks.add_task(_run_pipeline_background, req.meeting_id, req.force)
     return {"status": "accepted", "meeting_id": req.meeting_id}
 
 
