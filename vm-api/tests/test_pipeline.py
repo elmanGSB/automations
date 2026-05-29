@@ -446,12 +446,14 @@ async def test_pipeline_run_accepts_immediately():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_run_force_blocks():
-    """force=True runs synchronously so backfill loops serialize pipeline jobs."""
+async def test_pipeline_run_force_returns_result():
+    """force=True runs synchronously and returns the full per-step result (200)."""
     import main as m
     m.VM_API_SECRET = "secret"
 
-    with patch("main._run_pipeline_background") as mock_bg, \
+    fake = {"status": "completed", "meeting_id": "abc123", "steps": {}}
+
+    with patch("main.run_meeting_pipeline", return_value=fake) as mock_pipeline, \
          patch("main.pool", MagicMock()), \
          patch("main.app_event_loop", MagicMock()):
         async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
@@ -460,8 +462,12 @@ async def test_pipeline_run_force_blocks():
                 json={"meeting_id": "abc123", "force": True},
                 headers={"Authorization": "Bearer secret"},
             )
-    assert r.status_code == 202
-    mock_bg.assert_called_once_with("abc123", True)  # called inline, not as background task
+    assert r.status_code == 200
+    assert r.json()["status"] == "completed"
+    mock_pipeline.assert_called_once()
+    args, kwargs = mock_pipeline.call_args
+    assert args[0] == "abc123"
+    assert kwargs.get("force") is True
 
 
 # ---------------------------------------------------------------------------
