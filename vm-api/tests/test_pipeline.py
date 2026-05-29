@@ -426,14 +426,12 @@ async def test_pipeline_run_requires_auth():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_run_returns_result():
-    """POST /api/pipeline/run must call run_meeting_pipeline and return its result."""
+async def test_pipeline_run_accepts_immediately():
+    """POST /api/pipeline/run must return 202 immediately without blocking."""
     import main as m
     m.VM_API_SECRET = "secret"
 
-    fake = {"status": "completed", "meeting_id": "abc123", "steps": {}}
-
-    with patch("main.run_meeting_pipeline", return_value=fake), \
+    with patch("main._run_pipeline_background"), \
          patch("main.pool", MagicMock()), \
          patch("main.app_event_loop", MagicMock()):
         async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
@@ -442,8 +440,8 @@ async def test_pipeline_run_returns_result():
                 json={"meeting_id": "abc123"},
                 headers={"Authorization": "Bearer secret"},
             )
-    assert r.status_code == 200
-    assert r.json()["status"] == "completed"
+    assert r.status_code == 202
+    assert r.json()["status"] == "accepted"
     assert r.json()["meeting_id"] == "abc123"
 
 

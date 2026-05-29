@@ -24,13 +24,14 @@ from typing import Any
 
 import asyncpg
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
 from analyzer import analyze_patterns
 from config import NLM_ANALYSIS_CATEGORIES
 from emailer import send_patterns_report
+from notifier import send_error
 from pipeline_runner import run_meeting_pipeline
 from state import get_all_notebooks
 
@@ -119,6 +120,9 @@ async def health_full():
 # Pipeline endpoint (replaces black-box interview-router)
 # ---------------------------------------------------------------------------
 
+_FATAL_STEPS = {"fetch", "classify_meeting", "notebooklm_notebook", "notebooklm_upload", "nlm_analysis"}
+
+
 class PipelineRunRequest(BaseModel):
     meeting_id: str
     # Backfill flag: bypass the is_meeting_processed early-return so meetings
@@ -127,14 +131,51 @@ class PipelineRunRequest(BaseModel):
     force: bool = False
 
 
-@app.post("/api/pipeline/run", dependencies=[Depends(require_auth)])
-def run_pipeline_endpoint(req: PipelineRunRequest):
-    """Synchronous pipeline — runs in FastAPI threadpool (plain def).
-    Returns structured per-step results displayed as Windmill job output.
+def _run_pipeline_background(meeting_id: str, force: bool = False) -> None:
+    """Background task: run pipeline and send Telegram on fatal failure.
+
+    Runs in FastAPI's threadpool after the 202 is sent, so Cloudflare's
+    100-second origin timeout can never fire (connection is already closed).
+    """
+    if pool is None or app_event_loop is None:
+        logger.error("Pipeline background task started before app init for meeting %s", meeting_id)
+        return
+    try:
+        result = run_meeting_pipeline(meeting_id, pool, app_event_loop, force=force)
+        if result.get("status") in ("skipped", "ignored"):
+            return
+        steps = result.get("steps") or {}
+        errored_steps = [
+            step for step, info in steps.items()
+            if step in _FATAL_STEPS and isinstance(info, dict) and info.get("status") == "error"
+        ]
+        if errored_steps or result.get("status") == "error":
+            steps_str = ", ".join(errored_steps) if errored_steps else "unknown (top-level)"
+            title = result.get("title") or meeting_id
+            category = result.get("category") or "unknown"
+            asyncio.run(send_error(
+                f"Pipeline error — {title}",
+                f"Meeting: {title}\nCategory: {category}\nFailed steps: {steps_str}",
+            ))
+    except Exception:
+        logger.exception("Pipeline background task crashed for meeting %s", meeting_id)
+        try:
+            asyncio.run(send_error("Pipeline crashed", f"Meeting ID: {meeting_id}"))
+        except Exception:
+            logger.exception("Failed to send crash notification for meeting %s", meeting_id)
+
+
+@app.post("/api/pipeline/run", dependencies=[Depends(require_auth)], status_code=202)
+def run_pipeline_endpoint(req: PipelineRunRequest, background_tasks: BackgroundTasks):
+    """Accept immediately (202) and run the pipeline as a background task.
+
+    Returns in <1s so Cloudflare's 100s origin timeout is never reached.
+    Failure alerts are sent directly from the background task via Telegram.
     """
     if pool is None or app_event_loop is None:
         raise HTTPException(status_code=503, detail="App not initialized")
-    return run_meeting_pipeline(req.meeting_id, pool, app_event_loop, force=req.force)
+    background_tasks.add_task(_run_pipeline_background, req.meeting_id, req.force)
+    return {"status": "accepted", "meeting_id": req.meeting_id}
 
 
 # ---------------------------------------------------------------------------
