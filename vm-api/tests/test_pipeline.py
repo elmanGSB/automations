@@ -426,14 +426,12 @@ async def test_pipeline_run_requires_auth():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_run_returns_result():
-    """POST /api/pipeline/run must call run_meeting_pipeline and return its result."""
+async def test_pipeline_run_accepts_immediately():
+    """Normal webhook calls return 202 without blocking (background task path)."""
     import main as m
     m.VM_API_SECRET = "secret"
 
-    fake = {"status": "completed", "meeting_id": "abc123", "steps": {}}
-
-    with patch("main.run_meeting_pipeline", return_value=fake), \
+    with patch("main._run_pipeline_background") as mock_bg, \
          patch("main.pool", MagicMock()), \
          patch("main.app_event_loop", MagicMock()):
         async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
@@ -442,9 +440,34 @@ async def test_pipeline_run_returns_result():
                 json={"meeting_id": "abc123"},
                 headers={"Authorization": "Bearer secret"},
             )
+    assert r.status_code == 202
+    assert r.json()["status"] == "accepted"
+    assert r.json()["meeting_id"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_force_returns_result():
+    """force=True runs synchronously and returns the full per-step result (200)."""
+    import main as m
+    m.VM_API_SECRET = "secret"
+
+    fake = {"status": "completed", "meeting_id": "abc123", "steps": {}}
+
+    with patch("main.run_meeting_pipeline", return_value=fake) as mock_pipeline, \
+         patch("main.pool", MagicMock()), \
+         patch("main.app_event_loop", MagicMock()):
+        async with AsyncClient(transport=ASGITransport(app=m.app), base_url="http://test") as ac:
+            r = await ac.post(
+                "/api/pipeline/run",
+                json={"meeting_id": "abc123", "force": True},
+                headers={"Authorization": "Bearer secret"},
+            )
     assert r.status_code == 200
     assert r.json()["status"] == "completed"
-    assert r.json()["meeting_id"] == "abc123"
+    mock_pipeline.assert_called_once()
+    args, kwargs = mock_pipeline.call_args
+    assert args[0] == "abc123"
+    assert kwargs.get("force") is True
 
 
 # ---------------------------------------------------------------------------

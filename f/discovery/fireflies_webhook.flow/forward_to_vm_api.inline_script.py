@@ -16,10 +16,7 @@ def main(skip: bool, event: str, meeting_id: str, reason: str = "") -> dict:
     if not cf_access_id or not cf_access_secret:
         raise RuntimeError("Cloudflare Access variables u/admin/cf_access_client_id or u/admin/cf_access_client_secret not set")
 
-    # Split timeout: fail fast on connect (10s), allow up to 15 min for the pipeline read
-    timeout = httpx.Timeout(connect=10.0, read=900.0, write=30.0, pool=10.0)
-
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=30.0) as client:
         r = client.post(
             f"{vm_api_base_url}/api/pipeline/run",
             json={"meeting_id": meeting_id},
