@@ -26,6 +26,10 @@ KNOWN_CATEGORIES = {
     "class-leadership": "Leadership — Art of Leading in Challenging Times",
     "class-taxes": "Taxes — Taxes and Business Strategy",
     "class-fsa": "FSA — Financial Statement Analysis",
+    "class-fin-trading": "Fin Trading — Financial Trading Strategies",
+    "class-conv-mgmt": "Conv in Mgmt — Conversations in Management",
+    "class-policy": "Policy — Policy Proposals & Political Strategy",
+    "class-humor": "Humor — Comedy Fundamentals",
 }
 
 INTERNAL_TEAM_NAMES = [
@@ -34,6 +38,14 @@ INTERNAL_TEAM_NAMES = [
     "broccoli",
 ]
 
-NLM_ENABLED_CATEGORIES = {"customer-discovery"}
+# Categories whose transcripts get archived as sources in a per-category
+# NotebookLM notebook. Any category we've intentionally named is archived;
+# ad-hoc/unknown categories skip NLM entirely to avoid orphan notebooks.
+NLM_UPLOAD_CATEGORIES = set(KNOWN_CATEGORIES.keys())
+
+# Categories where novel-insights analysis + email run on top of upload.
+# Restricted to customer-discovery: other categories have no [INTERVIEWEE]
+# speaker, so the NLM prompt returns noise.
+NLM_ANALYSIS_CATEGORIES = {"customer-discovery"}
 
 HINDSIGHT_API_KEY = os.environ.get("HINDSIGHT_API_KEY", "")
