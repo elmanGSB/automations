@@ -1,6 +1,8 @@
 -- Migration: Add subcategory column to discovery.insights and update category constraints
 -- Run via: docker exec -i paperclip-db-1 psql -U paperclip -d discovery < this-file
 -- Applied: 2026-05-25 (manually via gcloud IAP tunnel)
+-- Note: discovery/schema.sql must also be updated to remove 'technology' from the
+--       category CHECK and add the subcategory column (done in the discovery repo).
 
 BEGIN;
 

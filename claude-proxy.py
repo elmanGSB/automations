@@ -121,6 +121,13 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         # and Task — no Bash, Read, Write, or filesystem access. This proxy is
         # VM-internal (not reachable from the public internet) and the Claude
         # CLI process runs without any privileged credentials mounted.
+        #
+        # Concurrency note: each incoming request acquires ONE semaphore slot
+        # regardless of how many Task subagents it spawns. A single request that
+        # fans out 50 parallel WebSearches via Task consumes 50 actual Claude
+        # subscription calls. The semaphore prevents unbounded request queuing,
+        # not unbounded subagent fan-out. Callers must limit Task fan-out size
+        # to avoid hitting the subscription concurrency ceiling.
         cmd.extend(["--allowedTools", "WebSearch,WebFetch,Task"])
 
         # Upstream failures (rc != 0, timeout, claude CLI missing) MUST surface

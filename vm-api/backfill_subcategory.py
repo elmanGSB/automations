@@ -95,10 +95,13 @@ async def classify_insight(content: str, current_category: str) -> dict:
 async def run_backfill(dry_run: bool = False, limit: int | None = None):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
+        # Rows where subcategory='unclassifiable' were already processed and
+        # determined to be root-cause observations — skip them. All other
+        # NULL-subcategory rows (any category, including NULL) are candidates.
         query = """
             SELECT id, content, category
             FROM discovery.insights
-            WHERE subcategory IS NULL AND category IS NOT NULL
+            WHERE subcategory IS NULL
             ORDER BY id
         """
         if limit:
@@ -123,11 +126,12 @@ async def run_backfill(dry_run: bool = False, limit: int | None = None):
                         insight_id, current_cat, reasoning,
                     )
                     skipped += 1
-                    # Persist NULL so reruns don't reprocess this row and so
-                    # VALIDATE CONSTRAINT succeeds (NULL passes any CHECK constraint).
+                    # Persist 'unclassifiable' so reruns skip this row (WHERE subcategory IS NULL
+                    # won't match it). category stays as-is — the existing CHECK constraint uses
+                    # NOT VALID, so technology rows are exempt until a VALIDATE CONSTRAINT run.
                     if not dry_run:
                         await conn.execute(
-                            "UPDATE discovery.insights SET category=NULL, subcategory=NULL WHERE id=$1",
+                            "UPDATE discovery.insights SET subcategory='unclassifiable' WHERE id=$1",
                             insight_id,
                         )
                     continue
