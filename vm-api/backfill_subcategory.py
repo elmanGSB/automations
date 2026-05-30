@@ -120,6 +120,13 @@ async def run_backfill(dry_run: bool = False, limit: int | None = None):
                         insight_id, current_cat, reasoning,
                     )
                     skipped += 1
+                    # Persist NULL so reruns don't reprocess this row and so
+                    # VALIDATE CONSTRAINT succeeds (NULL passes any CHECK constraint).
+                    if not dry_run:
+                        await conn.execute(
+                            "UPDATE discovery.insights SET category=NULL, subcategory=NULL WHERE id=$1",
+                            insight_id,
+                        )
                     continue
 
                 logger.info(
