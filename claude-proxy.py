@@ -114,6 +114,20 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         # parallel subagents in 26s on the VM. Without Task, the model
         # serializes WebSearch calls and a batch of 30 takes ~80s; with Task,
         # we expect a single batch of 50+ to finish in well under a minute.
+        #
+        # Security model: --allowedTools is a whitelist that constrains both the
+        # main call AND any Task subagents it spawns. Subagents inherit the
+        # parent's allowed-tools set, so they are limited to WebSearch, WebFetch,
+        # and Task — no Bash, Read, Write, or filesystem access. This proxy is
+        # VM-internal (not reachable from the public internet) and the Claude
+        # CLI process runs without any privileged credentials mounted.
+        #
+        # Concurrency note: each incoming request acquires ONE semaphore slot
+        # regardless of how many Task subagents it spawns. A single request that
+        # fans out 50 parallel WebSearches via Task consumes 50 actual Claude
+        # subscription calls. The semaphore prevents unbounded request queuing,
+        # not unbounded subagent fan-out. Callers must limit Task fan-out size
+        # to avoid hitting the subscription concurrency ceiling.
         cmd.extend(["--allowedTools", "WebSearch,WebFetch,Task"])
 
         # Upstream failures (rc != 0, timeout, claude CLI missing) MUST surface

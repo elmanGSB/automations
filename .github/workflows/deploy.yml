@@ -154,13 +154,20 @@ jobs:
 
       - name: Run database migrations
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'which psql > /dev/null || { echo "psql not installed, skipping migrations"; exit 0; } && \
-             cd /home/elmanamador/automations && \
-             for sql in discovery/*.sql; do \
-               echo "Running migration: $sql"; \
-               PGPASSWORD=paperclip psql -h 127.0.0.1 -U paperclip -d discovery -f "$sql" 2>&1 | tail -3; \
-             done'
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} bash -s <<'REMOTE'
+          set -eo pipefail
+          if ! which psql > /dev/null 2>&1; then
+            echo "FATAL: psql not installed — cannot apply migrations. Install postgresql-client on the VM."
+            exit 1
+          fi
+          cd /home/elmanamador/automations
+          for sql in discovery/*.sql vm-api/migrations/*.sql; do
+            [ -f "$sql" ] || continue
+            echo "Running migration: $sql"
+            PGPASSWORD=paperclip psql -h 127.0.0.1 -U paperclip -d discovery -v ON_ERROR_STOP=1 -f "$sql"
+          done
+          echo "All migrations applied."
+          REMOTE
 
       - name: Install systemd unit from repo
         run: |
