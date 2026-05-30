@@ -126,12 +126,13 @@ async def run_backfill(dry_run: bool = False, limit: int | None = None):
                         insight_id, current_cat, reasoning,
                     )
                     skipped += 1
-                    # Persist 'unclassifiable' so reruns skip this row (WHERE subcategory IS NULL
-                    # won't match it). category stays as-is — the existing CHECK constraint uses
-                    # NOT VALID, so technology rows are exempt until a VALIDATE CONSTRAINT run.
+                    # Persist 'unclassifiable' sentinel so reruns skip this row
+                    # (WHERE subcategory IS NULL won't match it). Also null out
+                    # category — even NOT VALID CHECK constraints enforce on UPDATE,
+                    # so leaving category='technology' would fail the constraint.
                     if not dry_run:
                         await conn.execute(
-                            "UPDATE discovery.insights SET subcategory='unclassifiable' WHERE id=$1",
+                            "UPDATE discovery.insights SET category=NULL, subcategory='unclassifiable' WHERE id=$1",
                             insight_id,
                         )
                     continue
