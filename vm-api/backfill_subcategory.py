@@ -95,7 +95,7 @@ async def run_backfill(dry_run: bool = False, limit: int | None = None):
         query = """
             SELECT id, content, category
             FROM discovery.insights
-            WHERE subcategory IS NULL
+            WHERE subcategory IS NULL AND category IS NOT NULL
             ORDER BY id
         """
         if limit:
