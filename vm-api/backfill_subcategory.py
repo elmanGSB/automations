@@ -1,13 +1,16 @@
 """
 One-time backfill: assign subcategory to existing insights, reassign technology insights.
 
-Run from the vm-api directory with an active SSH tunnel to the DB:
+Requires two SSH tunnels — one for the DB and one for the Claude proxy:
   gcloud compute ssh paperclip-vm --tunnel-through-iap --zone=us-central1-f \
-    --project=paperclip-tribuai -- -N -L 5433:127.0.0.1:5432
+    --project=paperclip-tribuai -- -N -L 5433:127.0.0.1:5432 -L 8199:127.0.0.1:8199
 
 Then:
   DATABASE_URL=postgresql://paperclip:paperclip@localhost:5433/discovery \
   uv run python backfill_subcategory.py [--dry-run] [--limit 10]
+
+Override the Claude proxy URL via env var if needed (e.g., when running on the VM):
+  CLAUDE_PROXY_URL=http://127.0.0.1:8199/v1/messages
 """
 import argparse
 import asyncio
@@ -26,7 +29,7 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://paperclip:paperclip@localhost:5433/discovery",
 )
-CLAUDE_PROXY_URL = "http://127.0.0.1:8199/v1/messages"
+CLAUDE_PROXY_URL = os.environ.get("CLAUDE_PROXY_URL", "http://127.0.0.1:8199/v1/messages")
 
 VALID_CATEGORIES = [
     "ordering", "delivery", "pricing", "inventory", "communication",
