@@ -396,3 +396,8 @@ jobs:
             echo "✗ LiteLLM health check failed after 2 minutes"
             exit 1
           fi
+
+      - name: Prune dangling Docker images
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            'docker image prune -f && echo "✓ dangling images pruned"'
