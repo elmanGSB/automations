@@ -18,8 +18,7 @@ def create_notebook(title: str) -> str:
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Timed out creating notebook '{title}' after 120s")
     if result.returncode != 0:
-        detail = (result.stderr.strip() or result.stdout.strip()) or "(no output)"
-        raise RuntimeError(f"Failed to create notebook '{title}': {detail}")
+        raise RuntimeError(f"Failed to create notebook '{title}': {result.stderr.strip()}")
     # Output format: "✓ Created notebook: Title\n  ID: <uuid>"
     match = re.search(r"ID:\s*([a-f0-9-]{36})", result.stdout)
     if not match:
@@ -50,8 +49,9 @@ def add_file_source(notebook_id: str, file_path: str, title: str) -> None:
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Timed out uploading file to notebook '{notebook_id}' after 600s")
     if result.returncode != 0:
-        detail = (result.stderr.strip() or result.stdout.strip()) or "(no output)"
-        raise RuntimeError(f"Failed to add source to notebook '{notebook_id}': {detail}")
+        raise RuntimeError(
+            f"Failed to add source to notebook '{notebook_id}': {result.stderr.strip()}"
+        )
 
 
 def list_notebooks() -> list[dict]:
@@ -71,8 +71,7 @@ def list_notebooks() -> list[dict]:
     except subprocess.TimeoutExpired:
         raise RuntimeError("Timed out listing notebooks after 60s")
     if result.returncode != 0:
-        detail = (result.stderr.strip() or result.stdout.strip()) or "(no output)"
-        raise RuntimeError(f"Failed to list notebooks: {detail}")
+        raise RuntimeError(f"Failed to list notebooks: {result.stderr.strip()}")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as e:
