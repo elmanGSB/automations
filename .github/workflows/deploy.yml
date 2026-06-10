@@ -62,7 +62,7 @@ jobs:
       - name: Deploy portal to /var/www/portal
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            'sudo cp /home/elmanamador/automations/infra/portal/index.html /var/www/portal/index.html'
+            'sudo mkdir -p /var/www/portal && sudo cp /home/elmanamador/automations/infra/portal/index.html /var/www/portal/index.html'
 
       - name: One-time legacy .env migration
         run: |
