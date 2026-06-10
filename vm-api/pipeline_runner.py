@@ -11,13 +11,15 @@ would stall the event loop and freeze all other vm-api endpoints.
 """
 import asyncio
 import logging
+import os
+import subprocess
 import tempfile
 from datetime import date as date_type, datetime, timezone
 
 import asyncpg
 
 from analyzer import analyze_novel
-from classifier import classify_meeting
+from classifier import ClassifyAuthError, classify_meeting
 from config import (
     FIREFLIES_API_KEY,
     INTERNAL_TEAM_NAMES,
@@ -66,6 +68,40 @@ logger = logging.getLogger(__name__)
 
 # In-flight guard: prevents concurrent webhook retries from starting duplicate runs
 _in_flight: set[str] = set()
+
+_GCP_PROJECT = os.environ.get("GCP_PROJECT", "paperclip-tribuai")
+_CREDS_SECRET = os.environ.get("CLAUDE_CREDS_SECRET", "claude-code-credentials")
+_CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
+
+
+def _refresh_claude_credentials() -> bool:
+    """Pull fresh Claude Code credentials from GCP Secret Manager.
+
+    Called automatically when classify_meeting raises ClassifyAuthError.
+    Requires the VM's service account to have roles/secretmanager.secretAccessor.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gcloud", "secrets", "versions", "access", "latest",
+                f"--secret={_CREDS_SECRET}",
+                f"--project={_GCP_PROJECT}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.error("Secret Manager pull failed (rc=%d): %s", result.returncode, result.stderr[:300])
+            return False
+        os.makedirs(os.path.dirname(_CREDS_PATH), exist_ok=True)
+        with open(_CREDS_PATH, "w") as f:
+            f.write(result.stdout)
+        logger.info("Claude credentials refreshed from Secret Manager (%s)", _CREDS_SECRET)
+        return True
+    except Exception:
+        logger.exception("Unexpected error refreshing Claude credentials")
+        return False
 
 
 def _run_on_loop(coro, loop: asyncio.AbstractEventLoop):
@@ -153,25 +189,43 @@ def _run_pipeline(
     }
 
     # Step 3: Classify meeting type
-    try:
-        classification = asyncio.run(classify_meeting(
+    def _do_classify():
+        return asyncio.run(classify_meeting(
             title=transcript.title,
             participants=transcript.participants,
             summary=transcript.summary_overview,
             transcript_excerpt=labeled_transcript,
         ))
-        result["category"] = classification.category
-        result["steps"]["classify_meeting"] = {
-            "status": "ok",
-            "category": classification.category,
-            "confidence": classification.confidence,
-            "reasoning": classification.reasoning,
-        }
-        logger.info("Classified as '%s' (%s)", classification.category, classification.confidence)
+
+    try:
+        classification = _do_classify()
+    except ClassifyAuthError:
+        logger.warning("Claude auth expired for meeting %s — refreshing credentials and retrying", meeting_id)
+        if _refresh_claude_credentials():
+            try:
+                classification = _do_classify()
+                result["steps"]["classify_meeting_auth_refreshed"] = {"status": "ok"}
+            except Exception:
+                logger.exception("Classification still failed after credential refresh for %s", meeting_id)
+                result["steps"]["classify_meeting"] = {"status": "error", "error": "auth_refresh_failed"}
+                return result
+        else:
+            logger.error("Credential refresh failed — cannot classify meeting %s", meeting_id)
+            result["steps"]["classify_meeting"] = {"status": "error", "error": "auth_expired_no_refresh"}
+            return result
     except Exception:
         logger.exception("Classification failed for meeting %s", meeting_id)
         result["steps"]["classify_meeting"] = {"status": "error", "error": "classify_failed"}
         return result
+
+    result["category"] = classification.category
+    result["steps"]["classify_meeting"] = {
+        "status": "ok",
+        "category": classification.category,
+        "confidence": classification.confidence,
+        "reasoning": classification.reasoning,
+    }
+    logger.info("Classified as '%s' (%s)", classification.category, classification.confidence)
 
     # Step 4: Discovery extraction (customer-discovery only)
     # Guard: skip if no external speakers or no external transcript content

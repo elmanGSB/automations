@@ -1,10 +1,15 @@
 import json
+import os
 import re
 from dataclasses import dataclass
 import httpx
 from config import KNOWN_CATEGORIES
 
-CLAUDE_PROXY_URL = "http://127.0.0.1:8199/v1/messages"
+CLAUDE_PROXY_URL = os.environ.get("CLAUDE_PROXY_URL", "http://127.0.0.1:8199/v1/messages")
+
+
+class ClassifyAuthError(Exception):
+    """Claude proxy returned 401 — credentials expired. Caller should refresh and retry."""
 
 SYSTEM_PROMPT = """You are classifying a meeting transcript into a category.
 
@@ -87,6 +92,8 @@ async def classify_meeting(
             },
             headers={"x-api-key": "not-needed", "Content-Type": "application/json"},
         )
+        if response.status_code == 401:
+            raise ClassifyAuthError("claude-proxy returned 401 — OAuth token has expired")
         response.raise_for_status()
 
     data = response.json()
