@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jumpers Lab</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    header { text-align: center; margin-bottom: 3rem; }
+    header h1 { font-size: 2rem; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
+    header p { color: #64748b; margin-top: 0.4rem; font-size: 0.95rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      width: 100%;
+      max-width: 800px;
+    }
+    a.card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      background: #1e2330;
+      border: 1px solid #2d3348;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    a.card:hover { border-color: #4f7ef0; transform: translateY(-2px); }
+    .icon { font-size: 1.6rem; }
+    .card-title { font-weight: 600; font-size: 1rem; color: #fff; }
+    .card-desc { font-size: 0.82rem; color: #64748b; line-height: 1.4; }
+    footer { margin-top: 3rem; color: #334155; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Jumpers Lab</h1>
+    <p>Internal tools &amp; analytics</p>
+  </header>
+  <div class="grid">
+    <a class="card" href="https://teable-admin.jumpersapp.com" target="_blank">
+      <span class="icon">🗂️</span>
+      <span class="card-title">Interviews DB</span>
+      <span class="card-desc">Browse and edit discovery interviews, insights, and clusters</span>
+    </a>
+    <a class="card" href="https://metabase.jumpersapp.com" target="_blank">
+      <span class="icon">📊</span>
+      <span class="card-title">Analytics</span>
+      <span class="card-desc">Metabase dashboards — problem frequency, segments, insights</span>
+    </a>
+    <a class="card" href="https://hindsight.jumpersapp.com" target="_blank">
+      <span class="icon">🧠</span>
+      <span class="card-title">Hindsight</span>
+      <span class="card-desc">Long-term memory store for agent context and meeting history</span>
+    </a>
+    <a class="card" href="https://paperclip.jumpersapp.com" target="_blank">
+      <span class="icon">🤖</span>
+      <span class="card-title">Paperclip</span>
+      <span class="card-desc">Agent management — Chief of Staff, Research Analyst, and more</span>
+    </a>
+  </div>
+  <footer>Broccoli AI internal — not for distribution</footer>
+</body>
+</html>
