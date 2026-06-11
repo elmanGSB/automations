@@ -41,11 +41,30 @@ gcloud compute ssh paperclip-vm --tunnel-through-iap --zone=us-central1-f \
 ## Key Constraints
 
 - **Auth**: All `/api/*` and `/health/full` endpoints require `Authorization: Bearer <VM_API_SECRET>`
-- **Env vars**: `DATABASE_URL`, `FIREFLIES_API_KEY`, `VM_API_SECRET`, `TEABLE_EMAIL`, `TEABLE_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - **Port 3101**: GCP firewall already allows this — public access still goes through Cloudflare Tunnel + Access
-- **Pipeline execution**: `run_meeting_pipeline` runs synchronously in the FastAPI threadpool; Windmill holds the connection until the structured per-step result is returned
+- **Pipeline execution**: `run_meeting_pipeline` is a plain `def` that runs in the FastAPI threadpool — blocking NLM subprocess calls are safe there. See [docs/architecture.md](docs/architecture.md) for the two async dispatch patterns.
 - **Discovery extractor**: `discovery_extractor.py` and `teable_client.py` are copied here — keep in sync with `discovery/vm_modules/` when that changes
 - **Title overrides**: Meetings with titles starting `Internal:` (case-insensitive) skip the `analyze_novel` + `send_novel_report` steps even when the classifier returns `customer-discovery`. Upload still runs so the transcript is archived. See PR #42 for rationale.
+- **Claude proxy auth**: OAuth credentials expire ~24h. The pipeline auto-heals via GCP Secret Manager. See [docs/howto-auth-heal.md](docs/howto-auth-heal.md) for manual recovery.
+
+## Environment Variables
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `FIREFLIES_API_KEY` | yes | — | Fireflies GraphQL API |
+| `VM_API_SECRET` | yes | — | Bearer token for all `/api/*` + `/health/full` endpoints |
+| `DATABASE_URL` | no | `postgresql://paperclip:paperclip@127.0.0.1:5432/discovery` | asyncpg pool for discovery DB |
+| `TELEGRAM_BOT_TOKEN` | no | `""` | Telegram bot for error alerts + new-category notifications |
+| `TELEGRAM_CHAT_ID` | no | `""` | Target chat for Telegram messages |
+| `TEABLE_TOKEN` | no | `""` | Teable Personal Access Token (needs record:read + record:create on Interviews DB) |
+| `TEABLE_BASE_URL` | no | `http://127.0.0.1:3200` | Teable API base URL |
+| `HINDSIGHT_URL` | no | `http://127.0.0.1:8888` | Hindsight MCP service URL |
+| `HINDSIGHT_API_KEY` | no | `""` | Bearer token for Hindsight retain calls |
+| `LITELLM_BASE_URL` | no | `http://127.0.0.1:4000/v1` | LiteLLM proxy URL (unused by pipeline — in config for tooling) |
+| `LITELLM_API_KEY` | no | `""` | LiteLLM API key |
+| `LITELLM_MODEL` | no | `claude-sonnet` | LiteLLM model name |
+
+Missing `TELEGRAM_*` vars silence notifications. Missing `TEABLE_TOKEN` raises `TeableAuthError` on first dual-write attempt and sends a Telegram alert.
 
 ## Two-Stage NotebookLM Gating (PR #38)
 

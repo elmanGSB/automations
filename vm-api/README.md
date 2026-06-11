@@ -24,15 +24,16 @@ flowchart TD
 
     S5["⑤ Get or create NotebookLM notebook\none notebook per category"]
 
-    S5 -->|NLM-enabled only\ncustomer-discovery| S6["⑥ Generate PDF + upload\nidempotent — skips if already uploaded"]
+    S5 -->|NLM-enabled only\ncustomer-discovery| S6["⑥ Generate DOCX + upload\nidempotent — skips if already uploaded"]
     S5 -->|non-NLM categories| done[skip ⑥–⑧]
 
     S6 --> S7["⑦ Analyze novel insights\nQuery NotebookLM via nlm CLI"]
     S7 --> S8["⑧ Send email report\nAgentMail"]
 
-    S8 --> S9["⑨ Mark processed\nstate.json FileLock write"]
+    S8 --> S9["⑨ Mark processed\nstate.json flock write"]
     done --> S9
     S9 --> S10["⑩ Retain in Hindsight\nlong-term memory"]
+    S10 --> S11["⑪ Notify on new category\nTelegram (non-fatal)"]
 
     style A fill:#fff3bf,stroke:#f59f00
     style S4 fill:#d3f9d8,stroke:#2f9e44
@@ -79,7 +80,7 @@ Only `customer-discovery` triggers the novel-insights analysis and email. Other 
 | `team-syncs` | Internal standups, retrospectives | — | ✅ | — |
 | `competitors` | Competitive research calls | — | ✅ | — |
 | `advisors` | Advisor and mentor meetings (business mentorship, strategy, growth guidance) | — | ✅ | — |
-| `tools-research` | Technical tool evaluation, workflow automation research, software product evaluations | — | ✅ | — |
+| `tools-research` | Technical tool evaluation, workflow automation research, software product evaluations | — | — ¹ | — |
 | `class-mge` | Managing Growing Enterprises | — | ✅ | — |
 | `class-sales` | Building Sales Organizations | — | ✅ | — |
 | `class-leadership` | The Art of Leading in Challenging Times | — | ✅ | — |
@@ -91,7 +92,9 @@ Only `customer-discovery` triggers the novel-insights analysis and email. Other 
 | `class-humor` | Comedy Fundamentals | — | ✅ | — |
 | *(new slug)* | Auto-generated for unknown types | — | — | — |
 
-Unknown meeting types get a descriptive slug (e.g. `conference-panel`). Add them to `KNOWN_CATEGORIES` in `config.py` to give them a human-readable notebook title.
+Unknown meeting types get a descriptive slug (e.g. `conference-panel`). Add them to `KNOWN_CATEGORIES` in `config.py` to give them a human-readable notebook title and enable NLM upload.
+
+¹ `tools-research` is a known classifier output but is not yet in `KNOWN_CATEGORIES` — add it to `config.py` to enable NLM archiving. See [CLAUDE.md](CLAUDE.md) for the two-step process.
 
 ### `Internal:` title override (Steps ⑦–⑧)
 
@@ -127,22 +130,22 @@ Windmill can retry jobs. The pipeline is safe to re-run:
 
 - **Processed check** — `state.json` stores all processed meeting IDs. Duplicate webhook calls are skipped.
 - **In-flight guard** — `_in_flight` set blocks a second concurrent run for the same meeting ID within the same process.
-- **NLM upload guard** — `state.json` tracks `_nlm_uploaded` per meeting. If `add_pdf_source` succeeded but `analyze_novel` failed, a retry will skip the upload and run only the analysis.
-- **FileLock** — all `state.json` writes use `filelock.FileLock` to prevent concurrent Windmill jobs from corrupting the file.
+- **NLM upload guard** — `state.json` tracks `_nlm_uploaded` per meeting. If `add_file_source` succeeded but `analyze_novel` failed, a retry will skip the upload and run only the analysis.
+- **File lock** — all `state.json` writes use `fcntl.flock` exclusive locks to prevent concurrent Windmill jobs from corrupting the file. Per-category locks avoid a slow notebook-create subprocess blocking unrelated writes.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `main.py` | FastAPI app, `/api/pipeline/run` and other endpoints |
-| `pipeline_runner.py` | Full pipeline orchestration — all 10 steps |
+| `pipeline_runner.py` | Full pipeline orchestration — all 11 steps |
 | `config.py` | Categories, internal team names, NLM filter, API keys |
 | `speaker_roles.py` | Classifies speakers as internal or external |
 | `transcript_formatter.py` | Produces `[BROCCOLI TEAM]`/`[INTERVIEWEE]` labeled transcripts |
 | `classifier.py` | Sends transcript to Claude proxy, returns meeting category |
 | `discovery_extractor.py` | Extracts structured insights from customer-discovery calls |
-| `pdf_generator.py` | Generates role-labeled PDF for NotebookLM upload |
-| `notebooklm.py` | Creates notebooks and uploads PDF sources via `nlm` CLI |
+| `docx_generator.py` | Generates role-labeled DOCX transcript for NotebookLM upload |
+| `notebooklm.py` | Creates notebooks and uploads DOCX sources via `nlm` CLI |
 | `analyzer.py` | Queries NotebookLM for novel insights and aggregate patterns |
 | `emailer.py` | Sends insight report emails via AgentMail |
 | `hindsight.py` | Retains meeting context in Hindsight long-term memory |
@@ -166,5 +169,5 @@ gcloud compute ssh paperclip-vm --tunnel-through-iap --zone=us-central1-f \
 ## Tests
 
 ```bash
-uv run pytest tests/ -v   # 42 tests
+uv run pytest tests/ -v   # 45 tests
 ```
