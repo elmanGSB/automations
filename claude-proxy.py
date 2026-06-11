@@ -172,8 +172,16 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
         if result.returncode != 0:
             err = result.stderr.strip()[:500]
             print(f"[proxy] claude error (rc={result.returncode}): {err}", file=sys.stderr)
-            self._send_anthropic_error(502, "api_error",
-                                       f"claude CLI exited {result.returncode}: {err}")
+            # Return 401 for auth failures so callers can detect and self-heal (refresh
+            # credentials from Secret Manager) rather than treating this as a generic error.
+            auth_phrases = ("oauth token", "not logged in", "not authenticated",
+                            "please log in", "authentication required", "401")
+            if any(p in err.lower() for p in auth_phrases):
+                self._send_anthropic_error(401, "authentication_error",
+                                           f"claude auth expired: {err[:200]}")
+            else:
+                self._send_anthropic_error(502, "api_error",
+                                           f"claude CLI exited {result.returncode}: {err}")
             return
 
         response_text = result.stdout.strip()

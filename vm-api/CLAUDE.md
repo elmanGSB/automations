@@ -9,7 +9,7 @@ Central HTTP interface for Paperclip VM services. Runs on port 3101.
 ## Quick Commands
 
 ```bash
-cd /Users/elmanamador/coding/automations-notifier/vm-api
+cd /Users/elmanamador/coding/repos/automations/vm-api
 uv run uvicorn main:app --reload --port 3101   # local dev
 uv run pytest tests/                            # full test suite
 ```
