@@ -100,6 +100,12 @@ wmill sync push --yes --skip-secrets \
 - **VM:** `paperclip-vm` (GCP `us-central1-f`, project `paperclip-tribuai`)
 - **VM API port:** 3101
 
+## Portal (jumpersapp.com)
+
+`infra/portal/index.html` — static HTML with four links to internal tools (Teable, Metabase, Hindsight, Paperclip). Deployed by CI/CD to `/var/www/portal/` on the VM. All links use Cloudflare subdomain URLs (`*.jumpersapp.com`).
+
+See [docs/how-to-portal.md](docs/how-to-portal.md) to update a link.
+
 ## Repository Structure
 
 ```
@@ -115,7 +121,23 @@ vm-api/                   VM API — FastAPI app with full pipeline logic
   classifier.py
   emailer.py
   ...
+infra/
+  portal/index.html       jumpersapp.com portal — deployed by CI/CD
+  systemd/                Service unit files (vm-api, claude-proxy)
+  litellm/                LiteLLM gateway config
 .github/workflows/
+  deploy.yml              Full deploy: rsync → env → migrations → restart → health checks
   wmill-sync.yml          Auto-sync to Windmill on push to main
 wmill.yaml                Windmill sync config
 ```
+
+## Documentation
+
+| Doc | What it covers |
+|-----|---------------|
+| [docs/explanation-pipeline-design.md](docs/explanation-pipeline-design.md) | Why the pipeline is sync, 202 background tasks, two-tier NLM gating, `Internal:` override |
+| [docs/how-to-run-pipeline.md](docs/how-to-run-pipeline.md) | Trigger a manual run, force-backfill a processed meeting |
+| [docs/how-to-add-meeting-category.md](docs/how-to-add-meeting-category.md) | Add a new Fireflies meeting category end-to-end |
+| [docs/reference-ci-cd.md](docs/reference-ci-cd.md) | Every step in `deploy.yml` explained |
+| [docs/how-to-portal.md](docs/how-to-portal.md) | Update jumpersapp.com portal links |
+| [vm-api/README.md](vm-api/README.md) | Full 10-step pipeline, filters, idempotency, key files |

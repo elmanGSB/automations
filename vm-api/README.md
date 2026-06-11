@@ -151,8 +151,16 @@ Windmill can retry jobs. The pipeline is safe to re-run:
 ## Deploy
 
 ```bash
-gcloud compute scp -r /Users/elmanamador/coding/automations/vm-api paperclip-vm:~/ --zone=us-central1-f
-gcloud compute ssh paperclip-vm --zone=us-central1-f -- 'sudo systemctl restart vm-api'
+# Normal: push to main → GitHub Actions deploys automatically
+git push origin main
+```
+
+Do not SCP or edit code on the VM directly. The deploy workflow (`deploy.yml`) handles rsync, env migration, migrations, and restart with a health check gate. See [docs/reference-ci-cd.md](../docs/reference-ci-cd.md) for the full deploy sequence.
+
+```bash
+# Manual vm-api restart only — to pick up env changes without a full deploy:
+gcloud compute ssh paperclip-vm --tunnel-through-iap --zone=us-central1-f \
+  --project=paperclip-tribuai -- 'sudo systemctl restart vm-api'
 ```
 
 ## Tests
