@@ -76,6 +76,8 @@ curl -X POST https://leads.jumpersapp.com/api/pipeline/run \
 
 `force: true` bypasses the `is_meeting_processed` check but does **not** bypass the `is_nlm_uploaded` check. If the transcript was already uploaded to NotebookLM, the upload step is skipped and only the analysis + email re-run.
 
+> **Warning:** For `customer-discovery` meetings, `force: true` will re-run the novel-insights analysis and **send a duplicate email** to the external contact. If you want to replay without emailing, add `Internal:` to the start of the meeting title in Fireflies before force-running (this suppresses the email step while still running upload and analysis).
+
 ---
 
 ## Backfill multiple meetings

@@ -87,7 +87,8 @@ Only `customer-discovery` meetings generate emails. All other known categories (
 Pushing to `main` automatically syncs all Windmill flows, schedules, and variables via GitHub Actions (`.github/workflows/wmill-sync.yml`). Commits prefixed with `[WM]` are skipped to prevent Windmill → GitHub → Windmill loops.
 
 ```bash
-# Sync manually if needed
+# Sync manually if needed — only run from a clean checkout of main.
+# Running from a feature branch overwrites production flows with unpublished changes.
 wmill sync push --yes --skip-secrets \
   --workspace broccolli-ai-automations \
   --token $WMILL_TOKEN \

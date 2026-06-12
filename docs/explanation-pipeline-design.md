@@ -27,7 +27,7 @@ FastAPI event loop (thread A)
 ### Trade-offs
 
 - Blocking `httpx` calls in thread B are safe, but async `httpx.AsyncClient` is not — it would create a new event loop and conflict with the one in thread A. The pipeline uses the sync `FirefliesClient` for this reason.
-- `asyncio.run()` cannot be used for pool-bound queries because asyncpg connections are not thread-safe across loops. Only `run_coroutine_threadsafe` is safe.
+- For asyncpg pool queries, `asyncio.run()` cannot be used — asyncpg connections are not thread-safe across loops, so `run_coroutine_threadsafe(coro, loop).result()` is required. For stateless coroutines (Telegram alerts, AgentMail calls), `asyncio.run()` works fine and is used directly in `pipeline_runner.py`.
 
 ---
 
