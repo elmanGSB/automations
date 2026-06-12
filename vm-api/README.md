@@ -94,7 +94,7 @@ Only `customer-discovery` triggers the novel-insights analysis and email. Other 
 
 Unknown meeting types get a descriptive slug (e.g. `conference-panel`). Add them to `KNOWN_CATEGORIES` in `config.py` to give them a human-readable notebook title and enable NLM upload.
 
-¹ `tools-research` is a known classifier output but is not yet in `KNOWN_CATEGORIES` — add it to `config.py` to enable NLM archiving. See [CLAUDE.md](CLAUDE.md) for the two-step process.
+¹ `tools-research` is a known classifier output but is not yet in `KNOWN_CATEGORIES` — add it to `config.py` to enable NLM archiving. See [how-to-add-meeting-category.md](../docs/how-to-add-meeting-category.md) for the two-step process.
 
 ### `Internal:` title override (Steps ⑦–⑧)
 
@@ -169,5 +169,5 @@ gcloud compute ssh paperclip-vm --tunnel-through-iap --zone=us-central1-f \
 ## Tests
 
 ```bash
-uv run pytest tests/ -v   # 45 tests
+uv run pytest tests/ -v   # 102 tests
 ```
