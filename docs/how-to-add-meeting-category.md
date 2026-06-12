@@ -84,7 +84,7 @@ After merge, the first meeting that hits this category will:
 2. Upload the transcript as a source
 3. Send a Telegram notification (from `notifier.py`) announcing the new category and notebook ID
 
-**Verification:** After the next Fireflies meeting of this type fires the webhook, check Telegram for the new-category notification. Or force-run a known meeting of this type:
+**Verification:** After the next Fireflies meeting of this type fires the webhook, check Telegram for the new-category notification. Or force-run a known meeting of this type (use a non-customer-discovery meeting such as a class recording or team sync — force-running a `customer-discovery` meeting will re-send a duplicate email to the external contact):
 
 ```bash
 curl -X POST https://leads.jumpersapp.com/api/pipeline/run \
@@ -103,7 +103,7 @@ Confirm the response shows `"category": "new-slug"` and `"notebooklm_notebook": 
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Classifier still returns old slug or generic slug | PR not deployed yet | Wait for deploy, or `sudo systemctl restart vm-api` on the VM after verifying rsync completed |
+| Classifier still returns old slug or generic slug | PR not deployed yet | Wait for deploy, or SSH to the VM and verify rsync is finished (`ps aux | grep rsync` — no active rsync) before running `sudo systemctl restart vm-api` |
 | Notebook not created after first matching meeting | `KNOWN_CATEGORIES` entry missing or slug mismatch | Check `config.py` — the slug in `KNOWN_CATEGORIES` must exactly match what the classifier returns |
 | `notify` step skipped | `is_new_notebook` was false (notebook already existed) | Normal if you ran a force-backfill before merge; the Telegram notification fires only on the first notebook creation |
 
