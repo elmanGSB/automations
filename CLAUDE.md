@@ -44,3 +44,18 @@ uv run pytest          # full suite (DB tests need SSH tunnel on port 5433)
 - **Claude proxy auth**: subscription-based OAuth (not API key). See `docs/solutions/deployment-issues/` for the known Docker auth issue.
 - **Windmill sync**: `wmill sync push` deploys flow definitions. Config in `wmill.yaml`.
 - **Dual-write**: discovery writes to Postgres (source of truth) and Teable (best-effort, non-fatal).
+
+## Deploy Configuration (configured by /setup-deploy)
+- Platform: Custom GitHub Actions → rsync to Paperclip VM (GCP us-central1-f)
+- Production URL: https://leads.jumpersapp.com
+- Deploy workflow: .github/workflows/deploy.yml (push to main → test → rsync → systemd restart → health checks)
+- Deploy status command: gh run view (monitor GH Actions run triggered by merge commit)
+- Merge method: squash
+- Project type: web API
+- Post-deploy health check: https://leads.jumpersapp.com/health (requires CF Access headers — verified by deploy.yml internally; use `gh run view` to confirm deploy success from local machine)
+
+### Custom deploy hooks
+- Pre-merge: none
+- Deploy trigger: automatic on push to main (GitHub Actions)
+- Deploy status: gh run list --branch main --limit 3 --json name,status,conclusion,headSha
+- Health check: poll `gh run view <run-id> --json conclusion` until success (CF Access creds not available locally; deploy.yml runs the actual curl health check on the VM)
