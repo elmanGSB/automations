@@ -44,7 +44,7 @@ Writes `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from GitHub Secrets into `vm-
 Same pattern for `TEABLE_TOKEN`. Missing token would silently drop Teable dual-writes in the discovery pipeline.
 
 **7. Run database migrations**  
-SSHes into the VM and runs all `.sql` files in `discovery/` and `vm-api/migrations/` via `docker exec` into the `paperclip-db-1` container. Migrations are idempotent — safe to re-run.
+SSHes into the VM and runs all `.sql` files in `discovery/` and `vm-api/migrations/` via `docker exec` into the `paperclip-db-1` container. Numbered migrations in `vm-api/migrations/` are idempotent — safe to re-run. `discovery/schema.sql` is a bootstrap script (run once on DB initialization) and is **not** idempotent; re-running it against a live database will error on existing tables.
 
 **8. Install systemd unit**  
 Copies `infra/systemd/vm-api.service` from the rsync'd repo into `/etc/systemd/system/` and reloads systemd. Ensures the unit file in `/etc/` always reflects what's in git.
