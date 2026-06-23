@@ -170,7 +170,14 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
             _claude_semaphore.release()
 
         if result.returncode != 0:
-            err = result.stderr.strip()[:500]
+            # The claude CLI (like the nlm CLI — see PR #47) sometimes writes auth
+            # errors to stdout rather than stderr. Fall back to stdout when stderr
+            # is blank so the auth-phrase check below actually sees the message and
+            # returns 401 (not 502). Without this, an expired-token failure printed
+            # to stdout looks like a generic 502 and the pipeline's auto-heal
+            # (refresh creds from Secret Manager + retry) never fires — classify
+            # fails silently until someone re-syncs the token by hand.
+            err = (result.stderr.strip() or result.stdout.strip())[:500]
             print(f"[proxy] claude error (rc={result.returncode}): {err}", file=sys.stderr)
             # Return 401 for auth failures so callers can detect and self-heal (refresh
             # credentials from Secret Manager) rather than treating this as a generic error.
