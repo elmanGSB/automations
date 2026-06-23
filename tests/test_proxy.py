@@ -42,9 +42,11 @@ def proxy_url():
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield f"http://127.0.0.1:{port}"
-    server.shutdown()
-    thread.join(timeout=2)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +98,7 @@ def test_stderr_non_auth_error_returns_502(proxy_url):
     with patch("claude_proxy.subprocess.run", return_value=_fake_result(1, stderr="segfault")):
         status, body = _post(proxy_url)
     assert status == 502
+    assert body["error"]["type"] == "api_error"
 
 
 def test_stdout_auth_phrase_returns_401_when_stderr_blank(proxy_url):
@@ -115,6 +118,7 @@ def test_stdout_non_auth_content_returns_502_when_stderr_blank(proxy_url):
     with patch("claude_proxy.subprocess.run", return_value=_fake_result(1, stdout="some other crash", stderr="")):
         status, body = _post(proxy_url)
     assert status == 502
+    assert body["error"]["type"] == "api_error"
 
 
 def test_both_blank_returns_502(proxy_url):
@@ -122,6 +126,25 @@ def test_both_blank_returns_502(proxy_url):
     with patch("claude_proxy.subprocess.run", return_value=_fake_result(1, stdout="", stderr="")):
         status, body = _post(proxy_url)
     assert status == 502
+    assert body["error"]["type"] == "api_error"
+
+
+def test_stderr_wins_when_both_contain_auth_phrase(proxy_url):
+    """stderr non-blank takes precedence over stdout — only one 401 is returned."""
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(
+        1, stderr="oauth token expired", stdout="not logged in"
+    )):
+        status, body = _post(proxy_url)
+    assert status == 401
+    assert "oauth token expired" in body["error"]["message"]
+
+
+def test_returncode_zero_empty_stdout_returns_502(proxy_url):
+    """returncode 0 with empty stdout → 502 (claude ran but produced nothing)."""
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(0, stdout="")):
+        status, body = _post(proxy_url)
+    assert status == 502
+    assert body["error"]["type"] == "api_error"
 
 
 # ---------------------------------------------------------------------------
@@ -134,4 +157,5 @@ def test_success_returns_200_with_anthropic_shape(proxy_url):
         status, body = _post(proxy_url)
     assert status == 200
     assert body["type"] == "message"
+    assert len(body["content"]) >= 1
     assert body["content"][0]["text"] == "Hello!"
