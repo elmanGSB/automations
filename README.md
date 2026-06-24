@@ -14,8 +14,8 @@ Fireflies transcript ready
 Windmill: fireflies_webhook flow  (Fireflies POSTs to a token-scoped Windmill webhook URL)
   ↓ validate event
   ↓ POST /api/pipeline/run → VM API (paperclip-vm :3101)
-     ↓ 11-step pipeline (see vm-api/README.md)
-     ↓ results per step returned as structured JSON
+     ↓ 11-step pipeline runs in background (see vm-api/README.md)
+     ↓ returns 202 immediately; step results logged server-side
   ↓ alert on fatal step errors (Telegram)
 
 Monday 9am UTC
@@ -64,7 +64,7 @@ All emails come from `customer_discovery@agentmail.to` to `elman@stanford.edu` a
 | Novel insights | After each new `customer-discovery` meeting | `[Customer Discovery] New Interview: <title>` |
 | Weekly patterns | Monday 9am UTC | `[Weekly] Interview Patterns — Customer Discovery` |
 
-Only `customer-discovery` meetings generate emails. All other known categories (classes, investor calls, team syncs, advisors, tools-research) get their transcripts archived as sources in a per-category NotebookLM notebook, but skip the novel-insights analysis + email. Ad-hoc/unknown categories skip NotebookLM entirely.
+Only `customer-discovery` meetings generate emails. All other known categories (classes, investor calls, team syncs, advisors, competitors) get their transcripts archived as sources in a per-category NotebookLM notebook, but skip the novel-insights analysis + email. Ad-hoc/unknown categories skip NotebookLM entirely.
 
 ## Meeting Categories
 
@@ -75,12 +75,15 @@ Only `customer-discovery` meetings generate emails. All other known categories (
 | `team-syncs` | Internal standups, retrospectives | — |
 | `competitors` | Competitive research calls | — |
 | `advisors` | Advisor/mentor meetings — business strategy and growth guidance | — |
-| `tools-research` | Technical tool evaluation, software product demos | — |
 | `class-mge` | Managing Growing Enterprises | — |
 | `class-sales` | Building Sales Organizations | — |
 | `class-leadership` | The Art of Leading in Challenging Times | — |
 | `class-taxes` | Taxes and Business Strategy | — |
 | `class-fsa` | Financial Statement Analysis | — |
+| `class-fin-trading` | Financial Trading Strategies | — |
+| `class-conv-mgmt` | Conversations in Management | — |
+| `class-policy` | Policy Proposals & Political Strategy | — |
+| `class-humor` | Comedy Fundamentals | — |
 
 ## CI/CD
 
