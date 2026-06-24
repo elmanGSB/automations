@@ -14,7 +14,7 @@ Fireflies transcript ready
 Windmill: fireflies_webhook flow  (Fireflies POSTs to a token-scoped Windmill webhook URL)
   ↓ validate event
   ↓ POST /api/pipeline/run → VM API (paperclip-vm :3101)
-     ↓ 10-step pipeline (see vm-api/README.md)
+     ↓ 11-step pipeline (see vm-api/README.md)
      ↓ results per step returned as structured JSON
   ↓ alert on fatal step errors (Telegram)
 
@@ -38,13 +38,13 @@ Windmill: health_check flow
 
 | Flow | Path | Trigger | Purpose |
 |------|------|---------|---------|
-| `fireflies_webhook` | `f/discovery/fireflies_webhook.flow` | Fireflies webhook event | Validate → run 10-step meeting pipeline → Telegram on error |
+| `fireflies_webhook` | `f/discovery/fireflies_webhook.flow` | Fireflies webhook event | Validate → run 11-step meeting pipeline → Telegram on error |
 | `weekly_digest` | `f/automations/weekly_digest.flow` | Monday 9am UTC | Aggregate patterns analysis → email report to founders |
 | `health_check` | `f/automations/health_check.flow` | Every 30 min | Ping VM health endpoint → Telegram alert if degraded |
 
 ## VM API
 
-The pipeline logic runs on the Paperclip VM (`paperclip-vm`, port 3101). See [`vm-api/README.md`](vm-api/README.md) for the full 10-step pipeline, category filters, idempotency design, and deployment instructions.
+The pipeline logic runs on the Paperclip VM (`paperclip-vm`, port 3101). See [`vm-api/README.md`](vm-api/README.md) for the full 11-step pipeline, category filters, idempotency design, and deployment instructions.
 
 **Endpoints used by Windmill:**
 
@@ -141,4 +141,4 @@ wmill.yaml                Windmill sync config
 | [docs/how-to-add-meeting-category.md](docs/how-to-add-meeting-category.md) | Add a new Fireflies meeting category end-to-end |
 | [docs/reference-ci-cd.md](docs/reference-ci-cd.md) | Every step in `deploy.yml` explained |
 | [docs/how-to-portal.md](docs/how-to-portal.md) | Update jumpersapp.com portal links |
-| [vm-api/README.md](vm-api/README.md) | Full 10-step pipeline, filters, idempotency, key files |
+| [vm-api/README.md](vm-api/README.md) | Full 11-step pipeline, filters, idempotency, key files |
