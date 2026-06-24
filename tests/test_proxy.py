@@ -130,13 +130,27 @@ def test_both_blank_returns_502(proxy_url):
 
 
 def test_stderr_wins_when_both_contain_auth_phrase(proxy_url):
-    """stderr non-blank takes precedence over stdout — only one 401 is returned."""
+    """stderr non-blank takes precedence over stdout for the error message body."""
     with patch("claude_proxy.subprocess.run", return_value=_fake_result(
         1, stderr="oauth token expired", stdout="not logged in"
     )):
         status, body = _post(proxy_url)
     assert status == 401
     assert "oauth token expired" in body["error"]["message"]
+
+
+def test_stdout_auth_phrase_detected_even_when_stderr_has_debug_line(proxy_url):
+    """Both streams scanned: stderr has an innocuous debug line, stdout has the auth error.
+
+    The original `(stderr or stdout)` short-circuit would see stderr and skip stdout,
+    returning 502. The fix scans both, so the auth phrase in stdout triggers 401.
+    """
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(
+        1, stderr="[debug] Claude Code v1.2.3", stdout="not logged in"
+    )):
+        status, body = _post(proxy_url)
+    assert status == 401
+    assert body["error"]["type"] == "authentication_error"
 
 
 def test_returncode_zero_empty_stdout_returns_502(proxy_url):
