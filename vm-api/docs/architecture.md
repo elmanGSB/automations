@@ -82,6 +82,8 @@ Ad-hoc slugs (invented by the classifier for unknown meeting types) skip upload 
 
 Claude OAuth tokens on the VM expire after ~24 hours. The pipeline heals itself without manual intervention:
 
+**How claude-proxy detects auth errors:** when the `claude` CLI exits non-zero, `claude-proxy.py` scans both `stderr` AND `stdout` for auth phrases (`"oauth token"`, `"not logged in"`, etc.). The claude CLI sometimes writes auth errors to stdout rather than stderr (same behavior as the `nlm` CLI — see PR #47). If either stream contains an auth phrase, the proxy returns HTTP 401 rather than 502.
+
 1. `classifier.py` checks `response.status_code == 401` before `raise_for_status()` and raises `ClassifyAuthError`.
 2. `_run_pipeline()` catches `ClassifyAuthError` around the classify step.
 3. `_refresh_claude_credentials()` pulls a fresh token from GCP Secret Manager (`claude-code-credentials`, project `paperclip-tribuai`) and writes it atomically to `~/.claude/.credentials.json`.
