@@ -86,9 +86,8 @@ Claude OAuth tokens on the VM expire after ~24 hours. The pipeline heals itself 
 
 1. `classifier.py` checks `response.status_code == 401` before `raise_for_status()` and raises `ClassifyAuthError`.
 2. `_run_pipeline()` catches `ClassifyAuthError` around the classify step.
-3. `_refresh_claude_credentials()` pulls a fresh token from GCP Secret Manager (`claude-code-credentials`, project `paperclip-tribuai`) and writes it atomically to `~/.claude/.credentials.json`.
+3. `_refresh_claude_credentials()` pulls a fresh token from GCP Secret Manager (`claude-code-credentials`, project `paperclip-tribuai`) and overwrites `~/.claude/.credentials.json` with the new content.
 4. The classify step retries once. If it still fails, the pipeline returns `auth_refresh_failed` in the step result and exits.
-5. A 60-second cooldown (`_CREDS_REFRESH_COOLDOWN`) prevents tight-loop refresh when Secret Manager is slow or returning bad data.
 
 For manual credential recovery see [howto-auth-heal.md](howto-auth-heal.md).
 

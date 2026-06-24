@@ -24,11 +24,9 @@ If the auto-heal succeeds, the run continues normally and no action is needed �
 When `classify_meeting` gets HTTP 401 from claude-proxy, `pipeline_runner` catches it and calls `_refresh_claude_credentials()`:
 
 1. Pulls the latest credential version from GCP Secret Manager: `claude-code-credentials` in project `paperclip-tribuai`.
-2. Validates the response is valid JSON (guards against corrupted Secret Manager versions).
-3. Writes the credentials atomically to `~/.claude/.credentials.json` on the VM.
+2. Checks that `gcloud` exited successfully (non-zero → logs error and aborts refresh).
+3. Overwrites `~/.claude/.credentials.json` on the VM with the new token.
 4. Retries `classify_meeting` once.
-
-A 60-second cooldown prevents rapid retry loops. If you see "Skipping credential refresh — cooldown not elapsed" in the logs, wait a minute before replaying the meeting.
 
 ---
 
