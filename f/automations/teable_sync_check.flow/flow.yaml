@@ -1,0 +1,15 @@
+summary: Teable Sync Check
+description: Daily diff between discovery.interviews (source of truth) and the mirrored Teable Interviews table. Telegram-alerts when rows drift.
+value:
+  modules:
+    - id: a
+      summary: Check Postgres ↔ Teable interview parity and alert on drift
+      value:
+        type: rawscript
+        content: '!inline check_teable_sync.inline_script.py'
+        input_transforms: {}
+        language: python3
+        timeout: 30
+schema:
+  type: object
+  properties: {}
