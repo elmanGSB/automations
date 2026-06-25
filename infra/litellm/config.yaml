@@ -41,9 +41,21 @@ model_list:
       api_base: http://172.18.0.1:8199
       api_key: dummy-subscription-proxy
 
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_base: http://172.18.0.1:8199
+      api_key: dummy-subscription-proxy
+
   # Literal Anthropic model ids exposed as aliases so callers that hardcode
   # the upstream id (e.g. n8n's Anthropic node dropdown) route to the same
   # claude-proxy backend without needing to know the short LiteLLM alias.
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_base: http://172.18.0.1:8199
+      api_key: dummy-subscription-proxy
+
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: anthropic/claude-sonnet-4-6
