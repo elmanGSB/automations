@@ -10,10 +10,15 @@ The nlm CLI subprocess calls block for up to 3 minutes — using async def here
 would stall the event loop and freeze all other vm-api endpoints.
 """
 import asyncio
+import json
 import logging
 import os
 import subprocess
 import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
 from datetime import date as date_type, datetime, timezone
 
 import asyncpg
@@ -74,7 +79,11 @@ _CREDS_SECRET = os.environ.get("CLAUDE_CREDS_SECRET", "claude-code-credentials")
 _CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
 
 _OAUTH_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
-_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_OAUTH_CLIENT_ID = os.environ.get("CLAUDE_OAUTH_CLIENT_ID", "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
+_OAUTH_DEFAULT_EXPIRES_IN = 8 * 3600  # 8h fallback if Anthropic omits expires_in
+# Serialises concurrent credential refreshes: prevents two simultaneous 401s from
+# both consuming the same refresh_token and having the loser overwrite the winner.
+_CREDS_LOCK = threading.Lock()
 _OAUTH_HEADERS = {
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -89,17 +98,14 @@ def _oauth_refresh(creds: dict) -> dict | None:
 
     Returns an updated credentials dict on success, None on failure.
     The VM calls this directly so it self-heals without needing the Mac to sync.
+    Caller must hold _CREDS_LOCK before calling to prevent token rotation races.
     """
-    import json as _json
-    import urllib.request
-    import urllib.error
-
     refresh_token = creds.get("claudeAiOauth", {}).get("refreshToken")
     if not refresh_token:
         logger.warning("No refreshToken in credentials — cannot do OAuth refresh")
         return None
 
-    body = _json.dumps({
+    body = json.dumps({
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": _OAUTH_CLIENT_ID,
@@ -108,10 +114,19 @@ def _oauth_refresh(creds: dict) -> dict | None:
     req = urllib.request.Request(_OAUTH_TOKEN_URL, data=body, headers=_OAUTH_HEADERS, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data = _json.loads(resp.read())
+            data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        body_text = e.read().decode(errors="replace")[:300]
-        logger.error("OAuth refresh HTTP %d: %s", e.code, body_text)
+        body_text = e.read().decode(errors="replace")
+        try:
+            err = json.loads(body_text)
+            logger.error("OAuth refresh HTTP %d: %s — %s", e.code, err.get("error", "?"), err.get("error_description", ""))
+            if err.get("error") == "invalid_grant":
+                logger.critical(
+                    "OAuth refresh_token is EXPIRED or revoked — manual credential rotation required. "
+                    "Run `claude /login` on the Mac then re-run sync-claude-creds.sh."
+                )
+        except Exception:
+            logger.error("OAuth refresh HTTP %d: %s", e.code, body_text[:200])
         return None
     except Exception:
         logger.exception("OAuth refresh request failed")
@@ -121,8 +136,7 @@ def _oauth_refresh(creds: dict) -> dict | None:
         logger.error("OAuth refresh: unexpected response keys: %s", list(data.keys()))
         return None
 
-    import time
-    expires_in = data.get("expires_in", 28800)
+    expires_in = data.get("expires_in", _OAUTH_DEFAULT_EXPIRES_IN)
     updated = dict(creds)
     updated["claudeAiOauth"] = dict(creds.get("claudeAiOauth", {}))
     updated["claudeAiOauth"]["accessToken"] = data["access_token"]
@@ -132,60 +146,74 @@ def _oauth_refresh(creds: dict) -> dict | None:
     return updated
 
 
+def _write_creds_atomic(data: dict | str) -> None:
+    """Write credentials to _CREDS_PATH atomically with restricted permissions.
+
+    Uses write-to-temp + os.replace to avoid a truncated file on crash.
+    Caller must hold _CREDS_LOCK.
+    """
+    creds_dir = os.path.dirname(_CREDS_PATH)
+    os.makedirs(creds_dir, exist_ok=True)
+    tmp_path = _CREDS_PATH + ".tmp"
+    with open(tmp_path, "w") as f:
+        if isinstance(data, dict):
+            json.dump(data, f)
+        else:
+            f.write(data)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, _CREDS_PATH)
+
+
 def _refresh_claude_credentials() -> bool:
     """Refresh Claude Code credentials, trying OAuth refresh first then Secret Manager.
 
     Strategy:
-    1. Read current credentials from disk (they include the refreshToken).
-    2. Call Claude's OAuth token endpoint to swap the refresh_token for a fresh
+    1. Acquire _CREDS_LOCK to serialise concurrent refreshes (prevents token rotation race).
+    2. Read current credentials from disk (they include the refreshToken).
+    3. Call Claude's OAuth token endpoint to swap the refresh_token for a fresh
        access_token — no Mac sync or browser required.
-    3. Write the updated credentials back to disk.
-    4. If OAuth refresh fails (e.g. refresh_token itself expired), fall back to
+    4. Write the updated credentials back to disk atomically with 0o600 permissions.
+    5. If OAuth refresh fails (e.g. refresh_token itself expired), fall back to
        pulling the latest blob from GCP Secret Manager (requires the Mac to have
        synced recently).
 
     Called automatically when classify_meeting raises ClassifyAuthError.
     """
-    import json as _json
+    with _CREDS_LOCK:
+        # --- Primary path: OAuth refresh token ---
+        try:
+            with open(_CREDS_PATH) as f:
+                creds = json.load(f)
+            refreshed = _oauth_refresh(creds)
+            if refreshed:
+                _write_creds_atomic(refreshed)
+                logger.info("Claude credentials refreshed via OAuth refresh_token")
+                return True
+            logger.warning("OAuth refresh failed — falling back to Secret Manager")
+        except Exception:
+            logger.exception("Error during OAuth refresh attempt — falling back to Secret Manager")
 
-    # --- Primary path: OAuth refresh token ---
-    try:
-        with open(_CREDS_PATH) as f:
-            creds = _json.load(f)
-        refreshed = _oauth_refresh(creds)
-        if refreshed:
-            os.makedirs(os.path.dirname(_CREDS_PATH), exist_ok=True)
-            with open(_CREDS_PATH, "w") as f:
-                _json.dump(refreshed, f)
-            logger.info("Claude credentials refreshed via OAuth refresh_token")
+        # --- Fallback: pull latest blob from GCP Secret Manager ---
+        try:
+            result = subprocess.run(
+                [
+                    "gcloud", "secrets", "versions", "access", "latest",
+                    f"--secret={_CREDS_SECRET}",
+                    f"--project={_GCP_PROJECT}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error("Secret Manager pull failed (rc=%d): %s", result.returncode, result.stderr[:300])
+                return False
+            _write_creds_atomic(result.stdout)
+            logger.info("Claude credentials refreshed from Secret Manager (%s)", _CREDS_SECRET)
             return True
-        logger.warning("OAuth refresh failed — falling back to Secret Manager")
-    except Exception:
-        logger.exception("Error during OAuth refresh attempt — falling back to Secret Manager")
-
-    # --- Fallback: pull latest blob from GCP Secret Manager ---
-    try:
-        result = subprocess.run(
-            [
-                "gcloud", "secrets", "versions", "access", "latest",
-                f"--secret={_CREDS_SECRET}",
-                f"--project={_GCP_PROJECT}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            logger.error("Secret Manager pull failed (rc=%d): %s", result.returncode, result.stderr[:300])
+        except Exception:
+            logger.exception("Unexpected error refreshing Claude credentials from Secret Manager")
             return False
-        os.makedirs(os.path.dirname(_CREDS_PATH), exist_ok=True)
-        with open(_CREDS_PATH, "w") as f:
-            f.write(result.stdout)
-        logger.info("Claude credentials refreshed from Secret Manager (%s)", _CREDS_SECRET)
-        return True
-    except Exception:
-        logger.exception("Unexpected error refreshing Claude credentials from Secret Manager")
-        return False
 
 
 def _run_on_loop(coro, loop: asyncio.AbstractEventLoop):
