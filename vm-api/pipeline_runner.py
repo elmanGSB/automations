@@ -73,13 +73,97 @@ _GCP_PROJECT = os.environ.get("GCP_PROJECT", "paperclip-tribuai")
 _CREDS_SECRET = os.environ.get("CLAUDE_CREDS_SECRET", "claude-code-credentials")
 _CREDS_PATH = os.path.expanduser("~/.claude/.credentials.json")
 
+_OAUTH_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_OAUTH_HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Origin": "https://claude.ai",
+    "Referer": "https://claude.ai/",
+    "Accept": "application/json, text/plain, */*",
+}
+
+
+def _oauth_refresh(creds: dict) -> dict | None:
+    """Exchange a refresh_token for a fresh access_token via Claude's OAuth endpoint.
+
+    Returns an updated credentials dict on success, None on failure.
+    The VM calls this directly so it self-heals without needing the Mac to sync.
+    """
+    import json as _json
+    import urllib.request
+    import urllib.error
+
+    refresh_token = creds.get("claudeAiOauth", {}).get("refreshToken")
+    if not refresh_token:
+        logger.warning("No refreshToken in credentials — cannot do OAuth refresh")
+        return None
+
+    body = _json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": _OAUTH_CLIENT_ID,
+    }).encode()
+
+    req = urllib.request.Request(_OAUTH_TOKEN_URL, data=body, headers=_OAUTH_HEADERS, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = _json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode(errors="replace")[:300]
+        logger.error("OAuth refresh HTTP %d: %s", e.code, body_text)
+        return None
+    except Exception:
+        logger.exception("OAuth refresh request failed")
+        return None
+
+    if "access_token" not in data:
+        logger.error("OAuth refresh: unexpected response keys: %s", list(data.keys()))
+        return None
+
+    import time
+    expires_in = data.get("expires_in", 28800)
+    updated = dict(creds)
+    updated["claudeAiOauth"] = dict(creds.get("claudeAiOauth", {}))
+    updated["claudeAiOauth"]["accessToken"] = data["access_token"]
+    updated["claudeAiOauth"]["expiresAt"] = int((time.time() + expires_in) * 1000)
+    if "refresh_token" in data:
+        updated["claudeAiOauth"]["refreshToken"] = data["refresh_token"]
+    return updated
+
 
 def _refresh_claude_credentials() -> bool:
-    """Pull fresh Claude Code credentials from GCP Secret Manager.
+    """Refresh Claude Code credentials, trying OAuth refresh first then Secret Manager.
+
+    Strategy:
+    1. Read current credentials from disk (they include the refreshToken).
+    2. Call Claude's OAuth token endpoint to swap the refresh_token for a fresh
+       access_token — no Mac sync or browser required.
+    3. Write the updated credentials back to disk.
+    4. If OAuth refresh fails (e.g. refresh_token itself expired), fall back to
+       pulling the latest blob from GCP Secret Manager (requires the Mac to have
+       synced recently).
 
     Called automatically when classify_meeting raises ClassifyAuthError.
-    Requires the VM's service account to have roles/secretmanager.secretAccessor.
     """
+    import json as _json
+
+    # --- Primary path: OAuth refresh token ---
+    try:
+        with open(_CREDS_PATH) as f:
+            creds = _json.load(f)
+        refreshed = _oauth_refresh(creds)
+        if refreshed:
+            os.makedirs(os.path.dirname(_CREDS_PATH), exist_ok=True)
+            with open(_CREDS_PATH, "w") as f:
+                _json.dump(refreshed, f)
+            logger.info("Claude credentials refreshed via OAuth refresh_token")
+            return True
+        logger.warning("OAuth refresh failed — falling back to Secret Manager")
+    except Exception:
+        logger.exception("Error during OAuth refresh attempt — falling back to Secret Manager")
+
+    # --- Fallback: pull latest blob from GCP Secret Manager ---
     try:
         result = subprocess.run(
             [
@@ -100,7 +184,7 @@ def _refresh_claude_credentials() -> bool:
         logger.info("Claude credentials refreshed from Secret Manager (%s)", _CREDS_SECRET)
         return True
     except Exception:
-        logger.exception("Unexpected error refreshing Claude credentials")
+        logger.exception("Unexpected error refreshing Claude credentials from Secret Manager")
         return False
 
 
