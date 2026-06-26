@@ -38,6 +38,7 @@ MODEL_ALIASES = {
     "claude-sonnet": "sonnet",
     "claude-haiku-4-5": "haiku",
     "claude-haiku": "haiku",
+    "claude-opus-4-8": "opus",
     "claude-opus-4-7": "opus",
     "claude-opus": "opus",
 }
