@@ -114,9 +114,10 @@ def _oauth_refresh(creds: dict) -> dict | None:
     req = urllib.request.Request(_OAUTH_TOKEN_URL, data=body, headers=_OAUTH_HEADERS, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
+            # Cap read to 64 KB — an OAuth token response has no legitimate reason to be larger.
+            data = json.loads(resp.read(65536))
     except urllib.error.HTTPError as e:
-        body_text = e.read().decode(errors="replace")
+        body_text = e.read(4096).decode(errors="replace")
         try:
             err = json.loads(body_text)
             logger.error("OAuth refresh HTTP %d: %s — %s", e.code, err.get("error", "?"), err.get("error_description", ""))
@@ -143,25 +144,37 @@ def _oauth_refresh(creds: dict) -> dict | None:
     updated["claudeAiOauth"]["expiresAt"] = int((time.time() + expires_in) * 1000)
     if "refresh_token" in data:
         updated["claudeAiOauth"]["refreshToken"] = data["refresh_token"]
+        logger.debug("OAuth refresh: refresh_token rotated")
+    else:
+        logger.debug("OAuth refresh: refresh_token not rotated by server")
     return updated
 
 
 def _write_creds_atomic(data: dict | str) -> None:
     """Write credentials to _CREDS_PATH atomically with restricted permissions.
 
-    Uses write-to-temp + os.replace to avoid a truncated file on crash.
-    Caller must hold _CREDS_LOCK.
+    Uses mkstemp (0o600 at creation) + os.replace to avoid a world-readable
+    window and to survive process kill mid-write. Caller must hold _CREDS_LOCK.
     """
     creds_dir = os.path.dirname(_CREDS_PATH)
     os.makedirs(creds_dir, exist_ok=True)
-    tmp_path = _CREDS_PATH + ".tmp"
-    with open(tmp_path, "w") as f:
-        if isinstance(data, dict):
-            json.dump(data, f)
-        else:
-            f.write(data)
-    os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, _CREDS_PATH)
+    # mkstemp creates the file at 0o600 before any data is written, avoiding
+    # the chmod-after-write race that would expose the token under default umask.
+    # The unique suffix also prevents cross-process clobber on the .tmp path.
+    fd, tmp_path = tempfile.mkstemp(dir=creds_dir, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            if isinstance(data, dict):
+                json.dump(data, f)
+            else:
+                f.write(data)
+        os.replace(tmp_path, _CREDS_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _refresh_claude_credentials() -> bool:
@@ -169,7 +182,8 @@ def _refresh_claude_credentials() -> bool:
 
     Strategy:
     1. Acquire _CREDS_LOCK to serialise concurrent refreshes (prevents token rotation race).
-    2. Read current credentials from disk (they include the refreshToken).
+    2. Re-read credentials from disk — if another thread already refreshed while we waited,
+       skip the network call entirely (avoids double-consuming a rotating refresh_token).
     3. Call Claude's OAuth token endpoint to swap the refresh_token for a fresh
        access_token — no Mac sync or browser required.
     4. Write the updated credentials back to disk atomically with 0o600 permissions.
@@ -180,10 +194,23 @@ def _refresh_claude_credentials() -> bool:
     Called automatically when classify_meeting raises ClassifyAuthError.
     """
     with _CREDS_LOCK:
-        # --- Primary path: OAuth refresh token ---
+        # Re-read after acquiring: another thread may have refreshed while we blocked.
+        # Avoids double-consuming a rotating refresh_token.
         try:
             with open(_CREDS_PATH) as f:
                 creds = json.load(f)
+            expires_at_ms = creds.get("claudeAiOauth", {}).get("expiresAt", 0)
+            if expires_at_ms and expires_at_ms > int(time.time() * 1000) + 60_000:
+                logger.info("Credentials already fresh (refreshed by peer thread)")
+                return True
+        except Exception:
+            creds = {}
+
+        # --- Primary path: OAuth refresh token ---
+        try:
+            if not creds:
+                with open(_CREDS_PATH) as f:
+                    creds = json.load(f)
             refreshed = _oauth_refresh(creds)
             if refreshed:
                 _write_creds_atomic(refreshed)
@@ -207,6 +234,12 @@ def _refresh_claude_credentials() -> bool:
             )
             if result.returncode != 0:
                 logger.error("Secret Manager pull failed (rc=%d): %s", result.returncode, result.stderr[:300])
+                return False
+            # Validate JSON before writing — gcloud can emit banners on stdout if misconfigured.
+            try:
+                json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                logger.error("Secret Manager output is not valid JSON — refusing to write: %s", exc)
                 return False
             _write_creds_atomic(result.stdout)
             logger.info("Claude credentials refreshed from Secret Manager (%s)", _CREDS_SECRET)
