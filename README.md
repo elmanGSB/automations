@@ -14,8 +14,8 @@ Fireflies transcript ready
 Windmill: fireflies_webhook flow  (Fireflies POSTs to a token-scoped Windmill webhook URL)
   ↓ validate event
   ↓ POST /api/pipeline/run → VM API (paperclip-vm :3101)
-     ↓ 10-step pipeline (see vm-api/README.md)
-     ↓ results per step returned as structured JSON
+     ↓ 11-step pipeline runs in background (see vm-api/README.md)
+     ↓ returns 202 immediately; step results logged server-side
   ↓ alert on fatal step errors (Telegram)
 
 Monday 9am UTC
@@ -38,13 +38,13 @@ Windmill: health_check flow
 
 | Flow | Path | Trigger | Purpose |
 |------|------|---------|---------|
-| `fireflies_webhook` | `f/discovery/fireflies_webhook.flow` | Fireflies webhook event | Validate → run 10-step meeting pipeline → Telegram on error |
+| `fireflies_webhook` | `f/discovery/fireflies_webhook.flow` | Fireflies webhook event | Validate → run 11-step meeting pipeline → Telegram on error |
 | `weekly_digest` | `f/automations/weekly_digest.flow` | Monday 9am UTC | Aggregate patterns analysis → email report to founders |
 | `health_check` | `f/automations/health_check.flow` | Every 30 min | Ping VM health endpoint → Telegram alert if degraded |
 
 ## VM API
 
-The pipeline logic runs on the Paperclip VM (`paperclip-vm`, port 3101). See [`vm-api/README.md`](vm-api/README.md) for the full 10-step pipeline, category filters, idempotency design, and deployment instructions.
+The pipeline logic runs on the Paperclip VM (`paperclip-vm`, port 3101). See [`vm-api/README.md`](vm-api/README.md) for the full 11-step pipeline, category filters, idempotency design, and deployment instructions.
 
 **Endpoints used by Windmill:**
 
@@ -64,7 +64,7 @@ All emails come from `customer_discovery@agentmail.to` to `elman@stanford.edu` a
 | Novel insights | After each new `customer-discovery` meeting | `[Customer Discovery] New Interview: <title>` |
 | Weekly patterns | Monday 9am UTC | `[Weekly] Interview Patterns — Customer Discovery` |
 
-Only `customer-discovery` meetings generate emails. All other known categories (classes, investor calls, team syncs, advisors, tools-research) get their transcripts archived as sources in a per-category NotebookLM notebook, but skip the novel-insights analysis + email. Ad-hoc/unknown categories skip NotebookLM entirely.
+Only `customer-discovery` meetings generate emails. All other known categories (classes, investor calls, team syncs, advisors, competitors) get their transcripts archived as sources in a per-category NotebookLM notebook, but skip the novel-insights analysis + email. Ad-hoc/unknown categories skip NotebookLM entirely.
 
 ## Meeting Categories
 
@@ -75,19 +75,23 @@ Only `customer-discovery` meetings generate emails. All other known categories (
 | `team-syncs` | Internal standups, retrospectives | — |
 | `competitors` | Competitive research calls | — |
 | `advisors` | Advisor/mentor meetings — business strategy and growth guidance | — |
-| `tools-research` | Technical tool evaluation, software product demos | — |
 | `class-mge` | Managing Growing Enterprises | — |
 | `class-sales` | Building Sales Organizations | — |
 | `class-leadership` | The Art of Leading in Challenging Times | — |
 | `class-taxes` | Taxes and Business Strategy | — |
 | `class-fsa` | Financial Statement Analysis | — |
+| `class-fin-trading` | Financial Trading Strategies | — |
+| `class-conv-mgmt` | Conversations in Management | — |
+| `class-policy` | Policy Proposals & Political Strategy | — |
+| `class-humor` | Comedy Fundamentals | — |
 
 ## CI/CD
 
 Pushing to `main` automatically syncs all Windmill flows, schedules, and variables via GitHub Actions (`.github/workflows/wmill-sync.yml`). Commits prefixed with `[WM]` are skipped to prevent Windmill → GitHub → Windmill loops.
 
 ```bash
-# Sync manually if needed
+# Sync manually if needed — only run from a clean checkout of main.
+# Running from a feature branch overwrites production flows with unpublished changes.
 wmill sync push --yes --skip-secrets \
   --workspace broccolli-ai-automations \
   --token $WMILL_TOKEN \
@@ -140,4 +144,4 @@ wmill.yaml                Windmill sync config
 | [docs/how-to-add-meeting-category.md](docs/how-to-add-meeting-category.md) | Add a new Fireflies meeting category end-to-end |
 | [docs/reference-ci-cd.md](docs/reference-ci-cd.md) | Every step in `deploy.yml` explained |
 | [docs/how-to-portal.md](docs/how-to-portal.md) | Update jumpersapp.com portal links |
-| [vm-api/README.md](vm-api/README.md) | Full 10-step pipeline, filters, idempotency, key files |
+| [vm-api/README.md](vm-api/README.md) | Full 11-step pipeline, filters, idempotency, key files |

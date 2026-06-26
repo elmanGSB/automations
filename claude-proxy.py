@@ -38,6 +38,7 @@ MODEL_ALIASES = {
     "claude-sonnet": "sonnet",
     "claude-haiku-4-5": "haiku",
     "claude-haiku": "haiku",
+    "claude-opus-4-8": "opus",
     "claude-opus-4-7": "opus",
     "claude-opus": "opus",
 }
@@ -170,13 +171,21 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
             _claude_semaphore.release()
 
         if result.returncode != 0:
-            err = result.stderr.strip()[:500]
+            # The claude CLI (like the nlm CLI — see PR #47) sometimes writes auth
+            # errors to stdout rather than stderr. Prefer stderr for the error
+            # message, but scan BOTH streams for auth phrases — a harmless debug
+            # line on stderr would otherwise shadow an auth error on stdout via
+            # the short-circuit `(stderr or stdout)`.
+            stderr_out = result.stderr.strip()
+            stdout_out = result.stdout.strip()
+            err = (stderr_out or stdout_out)[:500]
+            auth_check = (stderr_out + " " + stdout_out).lower()
             print(f"[proxy] claude error (rc={result.returncode}): {err}", file=sys.stderr)
             # Return 401 for auth failures so callers can detect and self-heal (refresh
             # credentials from Secret Manager) rather than treating this as a generic error.
             auth_phrases = ("oauth token", "not logged in", "not authenticated",
                             "please log in", "authentication required", "401")
-            if any(p in err.lower() for p in auth_phrases):
+            if any(p in auth_check for p in auth_phrases):
                 self._send_anthropic_error(401, "authentication_error",
                                            f"claude auth expired: {err[:200]}")
             else:
