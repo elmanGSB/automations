@@ -9,6 +9,12 @@ LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://127.0.0.1:4000/v1"
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
 LITELLM_MODEL = os.environ.get("LITELLM_MODEL", "claude-sonnet")
 
+# Model used by classify_meeting, routed through LiteLLM. Defaults to Gemini 3.1
+# Pro (static API key, no OAuth) so classification no longer depends on the Mac's
+# Claude token being synced fresh to the VM. Must match a model_name in the
+# LiteLLM config (infra/litellm/config.yaml).
+CLASSIFY_MODEL = os.environ.get("CLASSIFY_MODEL", "gemini-3-1-pro")
+
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 

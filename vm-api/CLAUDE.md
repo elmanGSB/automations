@@ -60,9 +60,10 @@ gcloud compute ssh paperclip-vm --tunnel-through-iap --zone=us-central1-f \
 | `TEABLE_BASE_URL` | no | `http://127.0.0.1:3200` | Teable API base URL |
 | `HINDSIGHT_URL` | no | `http://127.0.0.1:8888` | Hindsight MCP service URL |
 | `HINDSIGHT_API_KEY` | no | `""` | Bearer token for Hindsight retain calls |
-| `LITELLM_BASE_URL` | no | `http://127.0.0.1:4000/v1` | LiteLLM proxy URL (unused by pipeline — in config for tooling) |
-| `LITELLM_API_KEY` | no | `""` | LiteLLM API key |
-| `LITELLM_MODEL` | no | `claude-sonnet` | LiteLLM model name |
+| `LITELLM_BASE_URL` | no | `http://127.0.0.1:4000/v1` | LiteLLM gateway URL — `classify_meeting` calls it |
+| `LITELLM_API_KEY` | yes (for classify) | `""` | LiteLLM master key. Deploy upserts it from the `LITELLM_MASTER_KEY` CI secret; empty → classify 401s |
+| `LITELLM_MODEL` | no | `claude-sonnet` | LiteLLM model name (legacy/tooling) |
+| `CLASSIFY_MODEL` | no | `gemini-3-1-pro` | Model `classify_meeting` uses via LiteLLM; must be a `model_name` in `infra/litellm/config.yaml` |
 
 Missing `TELEGRAM_*` vars silence notifications. Missing `TEABLE_TOKEN` raises `TeableAuthError` on first dual-write attempt and sends a Telegram alert.
 
