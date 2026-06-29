@@ -1,15 +1,28 @@
 import json
-import os
 import re
 from dataclasses import dataclass
 import httpx
-from config import KNOWN_CATEGORIES
+from config import KNOWN_CATEGORIES, LITELLM_BASE_URL, LITELLM_API_KEY, CLASSIFY_MODEL
 
-CLAUDE_PROXY_URL = os.environ.get("CLAUDE_PROXY_URL", "http://127.0.0.1:8199/v1/messages")
+# Classification runs through the LiteLLM gateway (default model: Gemini 3.1 Pro)
+# instead of the Max-subscription Claude proxy. Gemini auth is a static API key
+# held by LiteLLM, so classify_meeting no longer depends on the Mac's OAuth token
+# being freshly synced to the VM — the failure mode that took the pipeline down
+# for days (expired Keychain token → no fresh creds → classify_meeting 401s).
+# Claude stays the engine for discovery extraction and the Attio triage resolver,
+# which still hit the proxy directly.
 
 
 class ClassifyAuthError(Exception):
-    """Claude proxy returned 401 — credentials expired. Caller should refresh and retry."""
+    """Legacy: was raised when the Claude proxy returned 401 (expired OAuth).
+
+    classify_meeting now runs on Gemini via LiteLLM (static API key), so this is
+    no longer raised on the classify path. Kept for import compatibility with
+    pipeline_runner's auto-heal handler, which is now a dead branch for classify.
+    A LiteLLM auth failure (misconfigured master key) surfaces as a normal
+    HTTPStatusError → classify_failed → Telegram alert, which is correct: a bad
+    gateway key is an operator problem, not something a Secret Manager pull fixes.
+    """
 
 SYSTEM_PROMPT = """You are classifying a meeting transcript into a category.
 
@@ -68,6 +81,42 @@ class ClassificationResult:
         return self.category not in KNOWN_CATEGORIES
 
 
+def _make_client() -> httpx.AsyncClient:
+    """Build the HTTP client for the LiteLLM call. Factored out so tests can
+    inject an httpx.MockTransport without a live gateway."""
+    return httpx.AsyncClient(timeout=60.0)
+
+
+async def _chat_completion(system: str, user: str) -> str:
+    """POST an OpenAI-shaped chat completion to LiteLLM and return the reply text.
+
+    LiteLLM routes CLASSIFY_MODEL (default gemini-3-1-pro) to Gemini and, per its
+    default_fallbacks config, drops to gemini-3-1-flash-lite if the primary errors.
+    """
+    url = f"{LITELLM_BASE_URL.rstrip('/')}/chat/completions"
+    async with _make_client() as client:
+        response = await client.post(
+            url,
+            json={
+                "model": CLASSIFY_MODEL,
+                "max_tokens": 200,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            },
+            headers={
+                "Authorization": f"Bearer {LITELLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+
+    data = response.json()
+    return data["choices"][0]["message"]["content"].strip()
+
+
 async def classify_meeting(
     title: str,
     participants: list[str],
@@ -81,23 +130,7 @@ async def classify_meeting(
         f"Labeled transcript excerpt (first 500 chars):\n{transcript_excerpt[:500]}"
     )
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            CLAUDE_PROXY_URL,
-            json={
-                "model": "claude-sonnet-4-6",
-                "max_tokens": 200,
-                "system": SYSTEM_PROMPT,
-                "messages": [{"role": "user", "content": user_message}],
-            },
-            headers={"x-api-key": "not-needed", "Content-Type": "application/json"},
-        )
-        if response.status_code == 401:
-            raise ClassifyAuthError("claude-proxy returned 401 — OAuth token has expired")
-        response.raise_for_status()
-
-    data = response.json()
-    raw = data["content"][0]["text"].strip()
+    raw = await _chat_completion(SYSTEM_PROMPT, user_message)
 
     try:
         parsed = _extract_json(raw)

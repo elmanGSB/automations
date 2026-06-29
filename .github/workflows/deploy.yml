@@ -157,6 +157,32 @@ jobs:
           echo "TEABLE_TOKEN upserted into $ENV"
           REMOTE
 
+      - name: Upsert LiteLLM master key into VM .env
+        # classify_meeting calls the LiteLLM gateway (Gemini 3.1 Pro). vm-api
+        # authenticates with the gateway's master key. Must match the
+        # LITELLM_MASTER_KEY the litellm container runs with.
+        env:
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+        run: |
+          if [ -z "$LITELLM_MASTER_KEY" ]; then
+            echo "FATAL: LITELLM_MASTER_KEY secret is unset — classify_meeting would 401 against the LiteLLM gateway"
+            exit 1
+          fi
+          echo "::add-mask::$LITELLM_MASTER_KEY"
+          # Pass the secret via the remote shell's env, not interpolated into the
+          # script body. Delete any existing line by a FIXED literal pattern, then
+          # append the value with printf — so sed never interprets metacharacters
+          # ( | & \ ) that a key might contain.
+          ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\" bash -s" <<'REMOTE'
+          set -e
+          ENV=/home/elmanamador/automations/vm-api/.env
+          sudo sed -i '/^LITELLM_API_KEY=/d' "$ENV"
+          printf 'LITELLM_API_KEY=%s\n' "$LITELLM_MASTER_KEY" | sudo tee -a "$ENV" >/dev/null
+          sudo chmod 600 "$ENV"
+          echo "LITELLM_API_KEY upserted into $ENV"
+          REMOTE
+
       - name: Run database migrations
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} bash -s <<'REMOTE'

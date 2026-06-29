@@ -1,6 +1,93 @@
 """Tests for meeting classifier."""
+import json
+
+import httpx
 import pytest
+
+import classifier
 from classifier import classify_meeting
+
+
+def _mock_client_factory(reply_text, capture=None):
+    """Return a _make_client replacement whose AsyncClient is backed by an
+    httpx.MockTransport that returns an OpenAI-shaped chat completion."""
+    def handler(request):
+        if capture is not None:
+            capture["url"] = str(request.url)
+            capture["headers"] = dict(request.headers)
+            capture["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": reply_text}}]})
+
+    transport = httpx.MockTransport(handler)
+    return lambda: httpx.AsyncClient(transport=transport, timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_classify_request_shape_and_parse(monkeypatch):
+    """classify_meeting posts an OpenAI chat completion to LiteLLM with the
+    Gemini model + bearer auth, and parses the choices[].message.content reply."""
+    capture = {}
+    monkeypatch.setattr(
+        classifier,
+        "_make_client",
+        _mock_client_factory(
+            '{"category": "team-syncs", "confidence": "high", "reasoning": "internal standup"}',
+            capture,
+        ),
+    )
+
+    result = await classify_meeting(
+        title="Standup",
+        participants=["a@x.com"],
+        summary="daily sync",
+        transcript_excerpt="[BROCCOLI TEAM]: status updates",
+    )
+
+    # Request shape
+    assert capture["url"].endswith("/chat/completions")
+    assert capture["body"]["model"] == "gemini-3-1-pro"
+    assert capture["headers"]["authorization"].startswith("Bearer")
+    assert [m["role"] for m in capture["body"]["messages"]] == ["system", "user"]
+
+    # Parsed result
+    assert result.category == "team-syncs"
+    assert result.confidence == "high"
+    assert result.reasoning == "internal standup"
+    assert result.is_new_category is False
+
+
+@pytest.mark.asyncio
+async def test_classify_handles_json_code_fence(monkeypatch):
+    """Gemini may wrap JSON in a ```json fence; _extract_json must strip it."""
+    fenced = '```json\n{"category": "investor-calls", "confidence": "medium", "reasoning": "vc call"}\n```'
+    monkeypatch.setattr(classifier, "_make_client", _mock_client_factory(fenced))
+
+    result = await classify_meeting(
+        title="VC", participants=["vc@fund.com"], summary="raise", transcript_excerpt="x"
+    )
+    assert result.category == "investor-calls"
+    assert result.is_new_category is False
+
+
+@pytest.mark.asyncio
+async def test_classify_invented_slug_is_new_category(monkeypatch):
+    """A classifier-invented slug not in KNOWN_CATEGORIES is flagged new."""
+    monkeypatch.setattr(
+        classifier,
+        "_make_client",
+        _mock_client_factory('{"category": "podcast-interview", "confidence": "low", "reasoning": "podcast"}'),
+    )
+    result = await classify_meeting(title="Pod", participants=[], summary="", transcript_excerpt="")
+    assert result.category == "podcast-interview"
+    assert result.is_new_category is True
+
+
+@pytest.mark.asyncio
+async def test_classify_raises_on_unparseable_reply(monkeypatch):
+    """Non-JSON model output raises ValueError (caught upstream as classify_failed)."""
+    monkeypatch.setattr(classifier, "_make_client", _mock_client_factory("not json at all"))
+    with pytest.raises(ValueError):
+        await classify_meeting(title="x", participants=[], summary="", transcript_excerpt="")
 
 
 @pytest.mark.asyncio

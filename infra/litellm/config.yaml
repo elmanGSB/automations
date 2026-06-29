@@ -16,6 +16,15 @@ model_list:
       model: gemini/gemini-3.1-flash-lite-preview
       api_key: os.environ/GEMINI_API_KEY
 
+  # Primary model for vm-api's classify_meeting (see vm-api/classifier.py).
+  # Static GEMINI_API_KEY auth means classification no longer depends on the
+  # Mac's Claude OAuth token being synced to the VM. Falls back to flash-lite
+  # via default_fallbacks below if Pro errors.
+  - model_name: gemini-3-1-pro
+    litellm_params:
+      model: gemini/gemini-3.1-pro-preview
+      api_key: os.environ/GEMINI_API_KEY
+
   # ---- Claude via Max-subscription proxy (claude-proxy.service on VM host) ----
   # The proxy wraps `claude -p` so calls cost $0 against Elman's Max plan.
   # Reachable from the litellm container via the docker bridge gateway.
