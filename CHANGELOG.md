@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.1.0] - 2026-06-29
+
+### Changed
+
+- **classify_meeting now runs on Gemini 3.1 Pro via LiteLLM** — previously it called the Max-subscription Claude proxy directly, so it depended on the Mac's OAuth token being synced fresh to the VM. When that token went stale (Mac asleep / not on Claude Code), classification 401'd and the pipeline failed, sometimes for days. It now posts an OpenAI-shaped chat completion to the LiteLLM gateway using the `gemini-3-1-pro` alias (`gemini/gemini-3.1-pro-preview`), authenticated with a static API key. LiteLLM's `default_fallbacks` drops to `gemini-3-1-flash-lite` if Pro errors. Claude stays the engine for discovery extraction and the Attio triage resolver.
+- **`CLASSIFY_MODEL` env var** (default `gemini-3-1-pro`) selects the classifier model; must match a `model_name` in `infra/litellm/config.yaml`.
+- **Deploy wires `LITELLM_API_KEY`** into the vm-api `.env` from the `LITELLM_MASTER_KEY` CI secret (fail-loud if unset), so vm-api can authenticate to the gateway. Verified live: gateway returns 200 with the key, and `gemini-3.1-pro-preview` is reachable with the VM's `GEMINI_API_KEY`.
+
+### Added
+
+- `gemini-3-1-pro` model alias in the LiteLLM config.
+- Mocked classifier unit tests (request shape, JSON-fence parsing, new-category detection, unparseable-reply handling).
+
 ## [0.0.0.2] - 2026-06-26
 
 ### Fixed
