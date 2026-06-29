@@ -169,19 +169,16 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$LITELLM_MASTER_KEY"
+          # Pass the secret via the remote shell's env, not interpolated into the
+          # script body. Delete any existing line by a FIXED literal pattern, then
+          # append the value with printf — so sed never interprets metacharacters
+          # ( | & \ ) that a key might contain.
           ssh -i ~/.ssh/deploy_key ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            "LITELLM_MASTER_KEY='$LITELLM_MASTER_KEY' bash -s" <<'REMOTE'
+            "LITELLM_MASTER_KEY=\"$LITELLM_MASTER_KEY\" bash -s" <<'REMOTE'
           set -e
           ENV=/home/elmanamador/automations/vm-api/.env
-          upsert() {
-            local key="$1" val="$2"
-            if grep -q "^${key}=" "$ENV"; then
-              sudo sed -i "s|^${key}=.*|${key}=${val}|" "$ENV"
-            else
-              echo "${key}=${val}" | sudo tee -a "$ENV" >/dev/null
-            fi
-          }
-          upsert LITELLM_API_KEY "$LITELLM_MASTER_KEY"
+          sudo sed -i '/^LITELLM_API_KEY=/d' "$ENV"
+          printf 'LITELLM_API_KEY=%s\n' "$LITELLM_MASTER_KEY" | sudo tee -a "$ENV" >/dev/null
           sudo chmod 600 "$ENV"
           echo "LITELLM_API_KEY upserted into $ENV"
           REMOTE
