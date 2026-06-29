@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.1.1] - 2026-06-29
+
+### Fixed
+
+- **classify_meeting truncated to empty under Gemini 3.1 Pro** — Pro is a thinking model and spent ~190 of the 200 `max_tokens` on internal reasoning, emitting only a truncated `` ```json\n{" `` (finish_reason=length). `_extract_json` then raised and every meeting failed `classify_meeting`. Raised the classifier `max_tokens` to 2048 so the model finishes reasoning and emits the full JSON (a real classification uses ~330 tokens total). Caught by post-deploy canary verification of v0.0.1.0.
+
 ## [0.0.1.0] - 2026-06-29
 
 ### Changed

@@ -99,7 +99,14 @@ async def _chat_completion(system: str, user: str) -> str:
             url,
             json={
                 "model": CLASSIFY_MODEL,
-                "max_tokens": 200,
+                # Gemini 3.1 Pro is a thinking model: it spends most of the token
+                # budget on internal reasoning before emitting the answer. At 200
+                # it burned ~190 reasoning tokens and truncated the JSON mid-string
+                # (finish_reason=length) — classify_failed on every meeting. A real
+                # classification finishes around ~330 total tokens; 2048 gives safe
+                # headroom for longer transcripts. The JSON itself stays tiny, so
+                # the extra ceiling only ever costs reasoning we actually use.
+                "max_tokens": 2048,
                 "temperature": 0,
                 "messages": [
                     {"role": "system", "content": system},
