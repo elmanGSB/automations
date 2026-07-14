@@ -76,6 +76,12 @@ model_list:
       api_base: http://172.18.0.1:8199
       api_key: dummy-subscription-proxy
 
+  - model_name: claude-sonnet-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_base: http://172.18.0.1:8199
+      api_key: dummy-subscription-proxy
+
   - model_name: claude-haiku-4-5
     litellm_params:
       model: anthropic/claude-haiku-4-5
