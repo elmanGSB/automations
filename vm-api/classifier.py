@@ -34,10 +34,10 @@ Use the full conversation — both sides — to determine the meeting type. The 
 
 Known categories:
 - customer-discovery: Customer interviews, sales discovery calls, demos with prospects, and conversations with anyone in the target market — including retailers, suppliers, distributors, or end-users — whose feedback informs the product or go-to-market strategy
-- investor-calls: Meetings with investors, VCs, angels, fundraising conversations
-- team-syncs: Internal team meetings, standups, retrospectives, planning sessions
+- investor-calls: Meetings with investors, VCs, angels, fundraising conversations. If the [INTERVIEWEE] is a known investor (VC, angel, fund principal), classify as investor-calls even if the conversation is general strategy advice, not just fundraising — the person's role as an investor outweighs the topic.
+- team-syncs: Internal team meetings, standups, retrospectives, planning sessions. Only use this when every speaker is [BROCCOLI TEAM] — any [INTERVIEWEE] speaker present means it is NOT team-syncs, even if the conversation feels internal (e.g. reviewing our own roadmap with an outside guest).
 - competitors: Competitive analysis calls, conversations about or with competitors
-- advisors: Advisor meetings, mentor conversations, board advisor check-ins. Focus: business strategy, growth guidance, mentorship. When in doubt between advisors and tools-research: advisors discuss business decisions and strategy; tools-research discusses software functionality and evaluation.
+- advisors: Advisor meetings, mentor conversations, board advisor check-ins with someone who is NOT an investor. Focus: business strategy, growth guidance, mentorship. When in doubt between advisors and investor-calls: check whether the [INTERVIEWEE] is an investor first — investor-calls wins regardless of topic. When in doubt between advisors and tools-research: advisors discuss business decisions and strategy; tools-research discusses software functionality and evaluation.
 - tools-research: Technical tool evaluation, workflow automation research, software product evaluations, technical demos of automation platforms. Examples: evaluating Windmill vs other automation tools, testing NotebookLM CLI features, comparing AI automation platforms. When in doubt: tools-research focuses on HOW software works; advisors focuses on BUSINESS implications.
 
 Stanford GSB classes (use the specific slug, not a generic one):
