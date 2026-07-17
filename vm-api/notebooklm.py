@@ -98,5 +98,7 @@ def notebook_title_for_category(category: str) -> str:
     """Return a human-readable notebook title for a category slug."""
     if category in KNOWN_CATEGORIES:
         return KNOWN_CATEGORIES[category]
+    if category.startswith("client-"):
+        return "Client: " + category[len("client-"):].replace("-", " ").title()
     # Unknown: title-case the slug
     return category.replace("-", " ").title()

@@ -412,10 +412,15 @@ def _run_pipeline(
     # Steps 5-8: NLM block, gated in two stages.
     #   Upload (notebook + source) runs for any KNOWN category so classes,
     #   investor calls, etc. accumulate searchable archives. Ad-hoc/unknown
-    #   categories skip entirely to avoid orphan notebooks.
+    #   categories skip entirely to avoid orphan notebooks — EXCEPT client-*,
+    #   which is deliberately open-ended (one notebook per client company, and
+    #   we can't enumerate client names in advance the way we do for classes).
     #   Analysis + email run only for customer-discovery — other categories
     #   have no [INTERVIEWEE] speaker, so the novel-insights prompt returns noise.
-    upload_enabled = classification.category in NLM_UPLOAD_CATEGORIES
+    upload_enabled = (
+        classification.category in NLM_UPLOAD_CATEGORIES
+        or classification.category.startswith("client-")
+    )
     analysis_enabled = classification.category in NLM_ANALYSIS_CATEGORIES
     notebook_id = None
     is_new_notebook = False
