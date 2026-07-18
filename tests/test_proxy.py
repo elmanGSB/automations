@@ -29,6 +29,7 @@ _mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(_mod)
 sys.modules.setdefault("claude_proxy", _mod)
 ClaudeProxyHandler = _mod.ClaudeProxyHandler
+_parse_cli_json = _mod._parse_cli_json
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,24 @@ _PAYLOAD = json.dumps({
     "model": "claude-sonnet-4-6",
     "messages": [{"role": "user", "content": "hello"}],
 }).encode()
+
+
+def _cli_json(result_text="Hello!", **usage_overrides):
+    """Minimal successful `claude -p --output-format json` envelope."""
+    usage = {
+        "input_tokens": 12,
+        "output_tokens": 34,
+        "cache_creation_input_tokens": 100,
+        "cache_read_input_tokens": 200,
+    }
+    usage.update(usage_overrides)
+    return json.dumps({
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": result_text,
+        "usage": usage,
+    })
 
 
 def _post(url, payload=_PAYLOAD):
@@ -161,15 +180,52 @@ def test_returncode_zero_empty_stdout_returns_502(proxy_url):
     assert body["error"]["type"] == "api_error"
 
 
+def test_returncode_zero_malformed_json_returns_502(proxy_url):
+    """returncode 0 + non-JSON stdout → 502."""
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(0, stdout="not json")):
+        status, body = _post(proxy_url)
+    assert status == 502
+    assert "invalid JSON" in body["error"]["message"]
+
+
+def test_returncode_zero_empty_result_returns_502(proxy_url):
+    """returncode 0 + JSON with empty result → 502."""
+    stdout = json.dumps({"type": "result", "is_error": False, "result": "", "usage": {}})
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(0, stdout=stdout)):
+        status, body = _post(proxy_url)
+    assert status == 502
+    assert "result text" in body["error"]["message"]
+
+
+def test_returncode_zero_is_error_returns_502(proxy_url):
+    """returncode 0 + is_error true → 502."""
+    stdout = json.dumps({"type": "result", "is_error": True, "result": "boom", "usage": {}})
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(0, stdout=stdout)):
+        status, body = _post(proxy_url)
+    assert status == 502
+    assert "boom" in body["error"]["message"]
+
+
 # ---------------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------------
 
-def test_success_returns_200_with_anthropic_shape(proxy_url):
-    """returncode 0 + stdout has content → 200 with Anthropic message shape."""
-    with patch("claude_proxy.subprocess.run", return_value=_fake_result(0, stdout="Hello!")):
+def test_success_returns_200_with_anthropic_shape_and_usage(proxy_url):
+    """returncode 0 + CLI JSON → 200 with text and forwarded usage (incl. cache)."""
+    with patch("claude_proxy.subprocess.run", return_value=_fake_result(0, stdout=_cli_json("Hello!"))):
         status, body = _post(proxy_url)
     assert status == 200
     assert body["type"] == "message"
-    assert len(body["content"]) >= 1
     assert body["content"][0]["text"] == "Hello!"
+    assert body["usage"]["input_tokens"] == 12
+    assert body["usage"]["output_tokens"] == 34
+    assert body["usage"]["cache_creation_input_tokens"] == 100
+    assert body["usage"]["cache_read_input_tokens"] == 200
+
+
+def test_parse_cli_json_defaults_missing_usage_to_zero():
+    text, usage = _parse_cli_json(json.dumps({
+        "type": "result", "is_error": False, "result": "ok",
+    }))
+    assert text == "ok"
+    assert usage == {"input_tokens": 0, "output_tokens": 0}

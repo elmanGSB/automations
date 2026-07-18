@@ -49,6 +49,41 @@ MODEL_ALIASES = {
 _CLAUDE_CONCURRENCY = int(os.environ.get("CLAUDE_PROXY_MAX_CONCURRENT", "3"))
 _claude_semaphore = threading.BoundedSemaphore(_CLAUDE_CONCURRENCY)
 
+# Cache fields LiteLLM already surfaces; forward when the CLI provides them so
+# spend accounting is not stuck at zeros when most tokens are cache hits.
+_USAGE_CACHE_KEYS = ("cache_creation_input_tokens", "cache_read_input_tokens")
+
+
+def _parse_cli_json(stdout: str):
+    """Parse `claude -p --output-format json` stdout into (text, usage).
+
+    Raises ValueError with a short message when the envelope is unusable.
+    """
+    raw = stdout.strip()
+    if not raw:
+        raise ValueError("claude CLI returned empty stdout")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"claude CLI returned invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("claude CLI JSON was not an object")
+    if payload.get("is_error"):
+        detail = payload.get("result") or payload.get("error") or "unknown error"
+        raise ValueError(f"claude CLI reported error: {detail}")
+    text = payload.get("result")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("claude CLI JSON missing non-empty result text")
+    usage_raw = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    usage = {
+        "input_tokens": int(usage_raw.get("input_tokens") or 0),
+        "output_tokens": int(usage_raw.get("output_tokens") or 0),
+    }
+    for key in _USAGE_CACHE_KEYS:
+        if key in usage_raw and usage_raw[key] is not None:
+            usage[key] = int(usage_raw[key])
+    return text, usage
+
 
 class ClaudeProxyHandler(BaseHTTPRequestHandler):
 
@@ -96,7 +131,9 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
 
         full_prompt = "\n\n".join(prompt_parts)
 
-        cmd = ["claude", "-p", "--output-format", "text"]
+        # json (not text) so we can forward real usage into the Anthropic envelope;
+        # LiteLLM cost/spend depends on non-zero input_tokens / output_tokens.
+        cmd = ["claude", "-p", "--output-format", "json"]
         cli_model = MODEL_ALIASES.get(requested_model, requested_model)
         if cli_model:
             cmd.extend(["--model", cli_model])
@@ -193,10 +230,10 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
                                            f"claude CLI exited {result.returncode}: {err}")
             return
 
-        response_text = result.stdout.strip()
-        if not response_text:
-            self._send_anthropic_error(502, "api_error",
-                                       "claude CLI returned empty stdout")
+        try:
+            response_text, usage = _parse_cli_json(result.stdout)
+        except ValueError as exc:
+            self._send_anthropic_error(502, "api_error", str(exc))
             return
 
         response = {
@@ -207,7 +244,7 @@ class ClaudeProxyHandler(BaseHTTPRequestHandler):
             "model": requested_model,
             "stop_reason": "end_turn",
             "stop_sequence": None,
-            "usage": {"input_tokens": 0, "output_tokens": 0},
+            "usage": usage,
         }
         self._send_json(200, response)
 
