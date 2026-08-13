@@ -16,6 +16,16 @@ model_list:
       model: gemini/gemini-3.1-flash-lite-preview
       api_key: os.environ/GEMINI_API_KEY
 
+  - model_name: gemini-3-5-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-3-7-flash
+    litellm_params:
+      model: gemini/gemini-3.7-flash
+      api_key: os.environ/GEMINI_API_KEY
+
   # Primary model for vm-api's classify_meeting (see vm-api/classifier.py).
   # Static GEMINI_API_KEY auth means classification no longer depends on the
   # Mac's Claude OAuth token being synced to the VM. Falls back to flash-lite
