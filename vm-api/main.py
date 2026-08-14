@@ -117,6 +117,89 @@ async def health_full():
     return {"status": overall, "checks": checks}
 
 
+# Teable's physical storage lives in the same Postgres database. The schema name
+# is the Teable "base" ID. The physical column is "Fireflies_ID" (underscore);
+# Teable rewrites spaces in user-facing field names to underscores when
+# materializing the column. The HTTP API still accepts "Fireflies ID".
+TEABLE_INTERVIEWS_TABLE = '"bseEuelyInFqZdXNY0D"."Interviews"'
+
+
+@app.get("/health/teable_sync", dependencies=[Depends(require_auth)])
+async def health_teable_sync():
+    """Compare discovery.interviews against the mirrored Teable Interviews table.
+
+    Used by the daily Windmill reconciliation flow to detect silent dual-write
+    drift. Reads both counts via Postgres (Teable stores its tables in the same
+    DB) so this endpoint stays green even if the Teable HTTP API or its PAT is
+    broken — the drift itself is what we want to alert on.
+    """
+    if pool is None:
+        raise HTTPException(status_code=503, detail="App not initialized")
+
+    try:
+        row = await pool.fetchrow(
+            f"""
+            WITH pg AS (
+              SELECT fireflies_meeting_id
+              FROM discovery.interviews
+              WHERE fireflies_meeting_id IS NOT NULL
+            ),
+            teable AS (
+              SELECT "Fireflies_ID" AS fireflies_meeting_id
+              FROM {TEABLE_INTERVIEWS_TABLE}
+              WHERE "Fireflies_ID" IS NOT NULL AND "Fireflies_ID" <> ''
+            ),
+            teable_dups AS (
+              SELECT fireflies_meeting_id
+              FROM teable
+              GROUP BY fireflies_meeting_id
+              HAVING COUNT(*) > 1
+            )
+            SELECT
+              (SELECT COUNT(*) FROM pg)::int AS pg_count,
+              (SELECT COUNT(*) FROM teable)::int AS teable_count,
+              COALESCE(
+                (SELECT array_agg(fireflies_meeting_id ORDER BY fireflies_meeting_id)
+                 FROM pg WHERE fireflies_meeting_id NOT IN (SELECT fireflies_meeting_id FROM teable)),
+                ARRAY[]::text[]
+              ) AS missing_in_teable,
+              COALESCE(
+                (SELECT array_agg(DISTINCT fireflies_meeting_id ORDER BY fireflies_meeting_id)
+                 FROM teable WHERE fireflies_meeting_id NOT IN (SELECT fireflies_meeting_id FROM pg)),
+                ARRAY[]::text[]
+              ) AS extra_in_teable,
+              COALESCE(
+                (SELECT array_agg(fireflies_meeting_id ORDER BY fireflies_meeting_id)
+                 FROM teable_dups),
+                ARRAY[]::text[]
+              ) AS duplicate_in_teable
+            """
+        )
+    except asyncpg.exceptions.UndefinedTableError:
+        # Teable base was recreated under a different ID — surface as an error.
+        return {
+            "status": "error",
+            "error": "teable_table_missing",
+            "expected_table": TEABLE_INTERVIEWS_TABLE,
+        }
+    except Exception as e:
+        logger.exception("teable_sync check failed")
+        return {"status": "error", "error": str(e)[:200]}
+
+    missing = list(row["missing_in_teable"])
+    extra = list(row["extra_in_teable"])
+    duplicates = list(row["duplicate_in_teable"])
+    in_sync = not missing and not extra and not duplicates
+    return {
+        "status": "ok" if in_sync else "drift",
+        "postgres_interviews": row["pg_count"],
+        "teable_interviews": row["teable_count"],
+        "missing_in_teable": missing,
+        "extra_in_teable": extra,
+        "duplicate_in_teable": duplicates,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Pipeline endpoint (replaces black-box interview-router)
 # ---------------------------------------------------------------------------

@@ -1,0 +1,7 @@
+summary: "Teable sync check — once daily at 13:15 UTC"
+script_path: "f/automations/teable_sync_check"
+is_flow: true
+schedule: "0 15 13 * * *"
+timezone: UTC
+args: {}
+enabled: true
