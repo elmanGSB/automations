@@ -26,6 +26,13 @@ model_list:
       model: gemini/gemini-3.7-flash
       api_key: os.environ/GEMINI_API_KEY
 
+  # Identifies which distributor sent a promo file.
+  # Chosen 2026-11-18 after a 24-file comparison: 24/24 correct, ~4.7 s/call.
+  - model_name: gemini-4-hydrogen
+    litellm_params:
+      model: gemini/gemini-4-hydrogen
+      api_key: os.environ/GEMINI_API_KEY
+
   # Primary model for vm-api's classify_meeting (see vm-api/classifier.py).
   # Static GEMINI_API_KEY auth means classification no longer depends on the
   # Mac's Claude OAuth token being synced to the VM. Falls back to flash-lite
